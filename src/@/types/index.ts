@@ -143,3 +143,33 @@ export interface CriticalAssessment {
   fallacy_count: number // F_fallacy (số lỗi ngụy biện)
   s_critical: number // Chuẩn hóa thang 100
 }
+
+// ============================================================================
+// Auth & phân quyền
+// ============================================================================
+
+/** Vai trò người dùng trong hệ thống */
+export type UserRole = 'student' | 'teacher' | 'admin'
+
+/** Trạng thái duyệt tài khoản (teacher cần được admin duyệt) */
+export type AccountStatus = 'pending' | 'active' | 'rejected'
+
+/** Hồ sơ người dùng (bảng public.profiles, 1-1 với auth.users) */
+export interface Profile {
+  id: string
+  username: string
+  email: string
+  full_name: string
+  class_name: string
+  role: UserRole
+  status: AccountStatus
+  created_at?: string
+  updated_at?: string
+}
+
+/** Người dùng đã đăng nhập = thông tin auth tối thiểu + profile */
+export interface AuthUser {
+  id: string
+  email: string
+  profile: Profile
+}

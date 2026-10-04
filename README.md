@@ -49,7 +49,64 @@ npm run dev
 
 ### Khởi tạo Database
 
-Mở **Supabase > SQL Editor**, dán toàn bộ nội dung `supabase/schema.sql` và chạy.
+Mở **Supabase > SQL Editor** và chạy lần lượt:
+
+1. `supabase/schema.sql` — 4 bảng dữ liệu (students, texts, debate_sessions, interaction_logs).
+2. `supabase/auth-schema.sql` — bảng `profiles` (có `username`, `role`, `status`), trigger tự tạo profile khi đăng ký, RLS.
+3. `supabase/analytics-schema.sql` — bảng `access_logs` (lượt đăng nhập) + RLS.
+4. `supabase/seed-admin.sql` — tạo sẵn tài khoản **admin** (xem bên dưới).
+
+### Bật Realtime (cho tính năng Online)
+
+Để đếm số người **đang online** và số người trong 1 phiên tranh luận:
+- Vào **Realtime** (hoặc Project Settings → Realtime) và đảm bảo Realtime được
+  bật cho project (mặc định đã bật). Tính năng online dùng **Presence** nên
+  **không cần** bật replication cho bảng nào.
+- Nếu Realtime chưa bật, phần "online" hiển thị 0 nhưng app vẫn chạy bình thường.
+
+### Bật đăng nhập (Supabase Auth) — ĐĂNG NHẬP BẰNG USERNAME
+
+Hệ thống dùng **username** thay vì email. Về mặt kỹ thuật, username được ánh xạ
+nội bộ sang email ẩn `<username>@litcritic.local` để nạp vào Supabase Auth.
+
+1. **Authentication > Providers > Email**: bật **Email** và **TẮT** *"Confirm
+   email"* (vì email là ẩn danh, không có hộp thư thật để xác nhận).
+2. Không cần cấu hình Redirect URL (đã bỏ luồng quên/đặt lại mật khẩu qua email).
+
+### Tài khoản Admin (có sẵn, không cần đăng ký)
+
+Sau khi chạy `supabase/seed-admin.sql`:
+
+| | |
+|---|---|
+| Tên đăng nhập | `admin` |
+| Mật khẩu | `123123` |
+
+Đăng nhập admin qua nút **"Đăng nhập Quản trị"** ở góc trên phải trang đăng nhập
+(trang login riêng, giao diện tối). Trang này chỉ chấp nhận tài khoản role
+`admin`; tài khoản khác bị từ chối.
+
+### Phân quyền (role) & duyệt giáo viên
+
+| Role | Quyền |
+|------|-------|
+| `student` | Dashboard, tạo/phân tích ngữ liệu, tranh luận, xem báo cáo — kích hoạt ngay |
+| `teacher` | Như student + **Nghiên cứu ViSEF** (xem phiên, logs, xuất CSV, số học sinh online) — **phải được admin phê duyệt** |
+| `admin` | **Chỉ** quản trị: **Quản lý người dùng** (duyệt/thu hồi giáo viên, danh sách tài khoản) + **Thống kê truy cập** (biểu đồ lượt đăng nhập theo ngày/giờ, số người online realtime). Admin KHÔNG làm nghiệp vụ nội dung. |
+
+**Tính năng Online (realtime):**
+- Admin: xem tổng số người online + danh sách, tách theo vai trò, trong trang Thống kê truy cập.
+- Teacher: xem số **học sinh đang online** và số **người tham gia** mỗi phiên trong trang Nghiên cứu.
+- Trong phòng tranh luận: hiển thị số người **đang mở** phiên đó ("đang xem").
+
+Luồng giáo viên:
+1. Giáo viên đăng ký → vào thẳng app nhưng ở trạng thái **"Chờ phê duyệt"**,
+   mọi tính năng bị **khóa** (banner nhắc + nút disable).
+2. Admin vào **Nghiên cứu ViSEF > Phê duyệt giáo viên**, bấm **Phê duyệt** hoặc
+   **Từ chối**.
+3. Sau khi được duyệt, giáo viên **tải lại trang** là mở khóa đầy đủ tính năng.
+
+> Không có thông báo qua email (tài khoản dùng username, email ẩn danh).
 
 ## Công thức S_critical
 
@@ -70,26 +127,42 @@ phản biện · Logic lập luận · Sáng tạo đọc hiểu.
 
 ```
 src/
-├── App.tsx                    # Điều hướng 5 pages (state navigation)
+├── App.tsx                    # Gate route theo auth + role, chuyển cảnh
 ├── main.tsx
 └── @/                         # alias "@" trỏ tới thư mục này
     ├── components/
     │   ├── ui/                # shadcn components
+    │   ├── AppShell.tsx       # Sidebar + topbar dùng chung (sau đăng nhập)
+    │   ├── AuthProvider.tsx   # Context phiên đăng nhập + role + status
+    │   ├── AuthLayout.tsx     # Bố cục 2 cột cho trang auth
+    │   ├── PendingBanner.tsx  # Banner "chờ phê duyệt" cho giáo viên
+    │   ├── AuroraBackground.tsx
     │   ├── ArgumentGraph.tsx
     │   ├── RadarChartAssessment.tsx
     │   └── RoundtableChat.tsx
     ├── lib/
     │   ├── supabaseClient.ts
+    │   ├── authContext.ts     # useAuth, ROLE_LABEL
+    │   ├── navigation.ts      # Route union + useNav
+    │   ├── motion.ts          # variants framer-motion dùng chung
     │   ├── agents.ts          # metadata 5 agent + scaffolding + trọng số
     │   ├── scoring.ts         # tính S_critical
-    │   ├── csv.ts             # xuất CSV ViSEF
-    │   └── navigation.ts
+    │   └── csv.ts             # xuất CSV ViSEF
     ├── services/
+    │   ├── authService.ts     # Supabase Auth theo username + duyệt teacher
     │   ├── geminiService.ts   # analyzeUnseenText + generateMultiAgentResponse
     │   └── supabaseService.ts # CRUD + fallback localStorage
-    ├── types/index.ts
-    └── pages/                 # 5 phân hệ
+    ├── types/index.ts         # + UserRole, AccountStatus, Profile, AuthUser
+    └── pages/
+        ├── LoginPage.tsx · RegisterPage.tsx · AdminLoginPage.tsx
+        ├── DashboardPage · TextInputPage · DebateArenaPage · AssessmentReportPage
+        ├── AdminResearchPage      # Nghiên cứu ViSEF (teacher)
+        ├── UserManagementPage     # Quản lý người dùng (admin)
+        └── AdminAnalyticsPage     # Thống kê truy cập + online (admin)
 ```
+
+> Database: `supabase/schema.sql` (dữ liệu) + `supabase/auth-schema.sql`
+> (auth/role/status) + `supabase/seed-admin.sql` (tài khoản admin).
 
 ## Lệnh
 

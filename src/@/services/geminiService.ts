@@ -11,7 +11,13 @@ import { GoogleGenAI } from '@google/genai'
  * Cấu hình API key FREE qua biến môi trường: VITE_GEMINI_API_KEY
  */
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
-const MODEL = 'gemini-1.5-flash'
+
+/**
+ * Danh sách model theo thứ tự ưu tiên.
+ * Ưu tiên 'gemini-1.5-flash'; nếu key không còn phục vụ model này (lỗi 404
+ * NOT_FOUND) sẽ TỰ ĐỘNG chuyển sang 'gemini-flash-latest' (alias luôn khả dụng).
+ */
+const MODEL_CANDIDATES = ['gemini-1.5-flash', 'gemini-flash-latest'] as const
 
 export const isGeminiConfigured = Boolean(API_KEY)
 
@@ -24,6 +30,110 @@ function getClient(): GoogleGenAI {
   }
   if (!client) client = new GoogleGenAI({ apiKey: API_KEY })
   return client
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** Lỗi tạm thời đáng để thử lại (quá tải / rate limit / mạng chập chờn). */
+function isRetryable(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    msg.includes('503') ||
+    msg.includes('unavailable') ||
+    msg.includes('overloaded') ||
+    msg.includes('high demand') ||
+    msg.includes('429') ||
+    msg.includes('rate limit') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('500') ||
+    msg.includes('deadline') ||
+    msg.includes('timeout') ||
+    msg.includes('fetch')
+  )
+}
+
+/** Nhận biết lỗi do hết/giới hạn hạn ngạch (429) để chờ lâu hơn, tránh dồn request. */
+function isQuotaError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    msg.includes('429') ||
+    msg.includes('rate limit') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('quota')
+  )
+}
+
+/** Model không tồn tại/không khả dụng với key hiện tại (404 NOT_FOUND). */
+function isModelNotFound(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    msg.includes('404') ||
+    msg.includes('not_found') ||
+    msg.includes('not found') ||
+    msg.includes('is not found') ||
+    msg.includes('does not exist')
+  )
+}
+
+/** Model đang dùng (có thể bị thay bằng fallback khi gặp 404). */
+let activeModelIndex = 0
+
+/**
+ * Gọi Gemini generateContent có TỰ ĐỘNG THỬ LẠI khi gặp lỗi tạm thời
+ * (503 quá tải, 429 rate limit…).
+ *
+ * - Tối đa 3 lần thử lại (tổng cộng 4 lần gọi), mỗi lần chờ ~2s.
+ * - Lỗi 429 (hạn ngạch) chờ lâu hơn một chút để không dồn request làm cạn quota.
+ * - Hết lượt thử → ném thông báo thân thiện cho UI.
+ */
+async function generateWithRetry(
+  params: Omit<
+    Parameters<GoogleGenAI['models']['generateContent']>[0],
+    'model'
+  >,
+  { retries = 3, delayMs = 2000 } = {}
+): Promise<string> {
+  const ai = getClient()
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const model = MODEL_CANDIDATES[activeModelIndex]
+    try {
+      const res = await ai.models.generateContent({ ...params, model })
+      return res.text ?? ''
+    } catch (err) {
+      lastErr = err
+
+      // Model không khả dụng với key → đổi sang model dự phòng, thử lại NGAY
+      // (không tốn delay, không tính là 1 lượt retry quá tải).
+      if (
+        isModelNotFound(err) &&
+        activeModelIndex < MODEL_CANDIDATES.length - 1
+      ) {
+        activeModelIndex += 1
+        console.warn(
+          `[Gemini] Model "${model}" không khả dụng, chuyển sang "${MODEL_CANDIDATES[activeModelIndex]}".`
+        )
+        attempt -= 1 // không tiêu một lượt retry cho việc đổi model
+        continue
+      }
+
+      if (attempt === retries || !isRetryable(err)) break
+      // 503: chờ 2s cố định. 429 (hạn ngạch): chờ tăng dần (2s, 4s, 6s) để nhẹ quota.
+      const delay = isQuotaError(err) ? delayMs * (attempt + 1) : delayMs
+      console.warn(
+        `[Gemini] Lỗi tạm thời (thử lại ${attempt + 1}/${retries} sau ${delay}ms):`,
+        err instanceof Error ? err.message : err
+      )
+      await sleep(delay)
+    }
+  }
+  // Hết lượt thử → ném lỗi thân thiện (UI hiển thị, không crash).
+  if (isRetryable(lastErr)) {
+    throw new Error(
+      'Máy chủ AI (Gemini) đang quá tải tạm thời. Vui lòng thử gửi lại sau giây lát.'
+    )
+  }
+  throw new Error(lastErr instanceof Error ? lastErr.message : String(lastErr))
 }
 
 /** Bóc tách phần JSON ra khỏi output của model (loại bỏ ```json fences, text thừa). */
@@ -68,8 +178,6 @@ export async function analyzeUnseenText(
   text: string,
   imageBase64?: string
 ): Promise<AnalyzedText> {
-  const ai = getClient()
-
   const instruction = `Bạn là chuyên gia Ngữ văn bám sát Chương trình GDPT 2018.
 Nhiệm vụ: tiếp nhận một ngữ liệu văn học MỚI (unseen text) và bóc tách thông tin phục vụ dạy đọc hiểu.
 ${
@@ -105,13 +213,11 @@ Yêu cầu: keywords tối đa 8 mục; initial_questions đúng 3 câu.`
     })
   }
 
-  const res = await ai.models.generateContent({
-    model: MODEL,
+  const raw = await generateWithRetry({
     contents: [{ role: 'user', parts }],
     config: { responseMimeType: 'application/json', temperature: 0.3 },
   })
 
-  const raw = res.text ?? ''
   const parsed = safeParse<Partial<AnalyzedText>>(raw, {})
 
   // Chuẩn hóa keywords (chấp nhận cả string[] lẫn object[])
@@ -135,6 +241,36 @@ Yêu cầu: keywords tối đa 8 mục; initial_questions đúng 3 câu.`
 }
 
 // ---------------------------------------------------------------------------
+// 1b) OCR một ảnh thành văn bản tiếng Việt (dùng khi học sinh đính kèm ảnh).
+// ---------------------------------------------------------------------------
+export async function ocrImage(imageBase64: string): Promise<string> {
+  const data = imageBase64.includes(',')
+    ? imageBase64.split(',')[1]
+    : imageBase64
+  const mimeMatch = imageBase64.match(/^data:(.*?);base64,/)
+  const raw = await generateWithRetry({
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: 'Đóng vai OCR. Trích xuất CHÍNH XÁC toàn bộ chữ TIẾNG VIỆT trong ảnh (giữ dấu thanh, xuống dòng hợp lý). Chỉ trả về văn bản, không giải thích.',
+          },
+          {
+            inlineData: {
+              mimeType: mimeMatch?.[1] ?? 'image/png',
+              data,
+            },
+          },
+        ],
+      },
+    ],
+    config: { temperature: 0.1 },
+  })
+  return raw.trim()
+}
+
+// ---------------------------------------------------------------------------
 // 2) Sinh phản hồi Multi-Agent (4 Critic Agents + Moderator)
 // ---------------------------------------------------------------------------
 export async function generateMultiAgentResponse(
@@ -143,8 +279,6 @@ export async function generateMultiAgentResponse(
   studentInput: string,
   attitude: Attitude
 ): Promise<MultiAgentTurn> {
-  const ai = getClient()
-
   const attitudeVi =
     attitude === 'Agree'
       ? 'ĐỒNG Ý'
@@ -212,15 +346,13 @@ LƯỢT MỚI CỦA HỌC SINH (thái độ: ${attitudeVi}):
 
 Hãy để 4 Critic Agents phản hồi rồi Moderator tổng hợp, kèm chấm điểm & phát hiện ngụy biện theo schema JSON ở trên.`
 
-  const res = await ai.models.generateContent({
-    model: MODEL,
+  const raw = await generateWithRetry({
     contents: [
       { role: 'user', parts: [{ text: systemPrompt }, { text: userPrompt }] },
     ],
     config: { responseMimeType: 'application/json', temperature: 0.8 },
   })
 
-  const raw = res.text ?? ''
   const parsed = safeParse<Partial<MultiAgentTurn>>(raw, {})
 
   const a = parsed.student_assessment ?? ({} as MultiAgentTurn['student_assessment'])

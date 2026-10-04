@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { CopyButton } from '@/components/CopyButton'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -8,8 +8,9 @@ import {
   senderEmoji,
   senderLabel,
 } from '@/lib/agents'
-import { cn } from 'cn'
 import type { Attitude, InteractionLog } from '@/types'
+import { cn } from 'cn'
+import { useEffect, useRef } from 'react'
 
 interface RoundtableChatProps {
   logs: InteractionLog[]
@@ -93,12 +94,23 @@ export function RoundtableChat({ logs, loading }: RoundtableChatProps) {
 
               <div
                 className={cn(
-                  'rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ring-1 ring-foreground/10',
+                  'group/msg relative rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ring-1 ring-foreground/10',
                   isStudent
                     ? 'bg-sky-50 text-sky-950 dark:bg-sky-950/40 dark:text-sky-100'
                     : 'bg-card'
                 )}
               >
+                {/* Nút copy — chỉ hiện khi hover vào message */}
+                {log.message && (
+                  <CopyButton
+                    text={log.message}
+                    className={cn(
+                      'absolute top-1 opacity-0 transition-opacity group-hover/msg:opacity-100',
+                      isStudent ? 'left-1' : 'right-1',
+                      'bg-background/70 backdrop-blur'
+                    )}
+                  />
+                )}
                 {log.message}
               </div>
 

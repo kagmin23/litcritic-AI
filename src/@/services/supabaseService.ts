@@ -1,9 +1,9 @@
-import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
+import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient'
 import type {
-  DebateSession,
-  InteractionLog,
-  Student,
-  TextItem,
+    DebateSession,
+    InteractionLog,
+    Student,
+    TextItem,
 } from '@/types'
 
 // ============================================================================
@@ -122,19 +122,65 @@ export async function createText(
   return data as TextItem
 }
 
+/**
+ * Chuẩn hóa một bản ghi text đọc từ DB: đảm bảo keywords / initial_questions
+ * luôn là mảng (DB có thể trả null hoặc chuỗi JSON) để UI không bị lỗi .length.
+ */
+export function normalizeText(raw: unknown): TextItem {
+  const t = (raw ?? {}) as Record<string, unknown>
+
+  const parseArray = (v: unknown): unknown[] => {
+    if (Array.isArray(v)) return v
+    if (typeof v === 'string') {
+      try {
+        const parsed = JSON.parse(v)
+        return Array.isArray(parsed) ? parsed : []
+      } catch {
+        return []
+      }
+    }
+    return []
+  }
+
+  const keywords = parseArray(t.keywords)
+    .map((k) => {
+      if (typeof k === 'string') return { term: k, meaning: '' }
+      const obj = (k ?? {}) as { term?: string; meaning?: string }
+      return { term: obj.term ?? '', meaning: obj.meaning ?? '' }
+    })
+    .filter((k) => k.term)
+
+  const initial_questions = parseArray(t.initial_questions)
+    .map((q) => (typeof q === 'string' ? q : String(q ?? '')))
+    .filter(Boolean)
+
+  return {
+    id: String(t.id ?? ''),
+    title: String(t.title ?? ''),
+    content: String(t.content ?? ''),
+    genre: String(t.genre ?? 'Khác'),
+    keywords,
+    background: String(t.background ?? ''),
+    initial_questions,
+    created_at: t.created_at ? String(t.created_at) : undefined,
+  }
+}
+
 export async function listTexts(): Promise<TextItem[]> {
-  if (!isSupabaseConfigured) return lsRead<TextItem>(LS_KEYS.texts)
+  if (!isSupabaseConfigured)
+    return lsRead<TextItem>(LS_KEYS.texts).map(normalizeText)
   const { data, error } = await supabase
     .from('texts')
     .select('*')
     .order('created_at', { ascending: false })
   if (error) throw error
-  return (data ?? []) as TextItem[]
+  return (data ?? []).map(normalizeText)
 }
 
 export async function getText(id: string): Promise<TextItem | null> {
   if (!isSupabaseConfigured) {
-    return lsRead<TextItem>(LS_KEYS.texts).find((t) => t.id === id) ?? null
+    const found = lsRead<TextItem>(LS_KEYS.texts).find((t) => t.id === id)
+    return found ? normalizeText(found) : null
   }
   const { data, error } = await supabase
     .from('texts')
@@ -142,7 +188,7 @@ export async function getText(id: string): Promise<TextItem | null> {
     .eq('id', id)
     .single()
   if (error) return null
-  return data as TextItem
+  return normalizeText(data)
 }
 
 // --------------------------------------------------------------------------
@@ -174,6 +220,48 @@ export async function createSession(
     .single()
   if (error) throw error
   return data as DebateSession
+}
+
+/**
+ * Tìm phiên ĐANG DIỄN RA (status 'active') gần nhất của 1 học sinh với 1 ngữ liệu.
+ * Dùng để "tiếp tục" phiên dang dở thay vì tạo mới (giữ lịch sử chat).
+ */
+export async function findActiveSession(
+  student_id: string,
+  text_id: string
+): Promise<DebateSession | null> {
+  if (!isSupabaseConfigured) {
+    const list = lsRead<DebateSession>(LS_KEYS.sessions)
+    return (
+      list.find(
+        (s) =>
+          s.student_id === student_id &&
+          s.text_id === text_id &&
+          s.status === 'active'
+      ) ?? null
+    )
+  }
+  const { data, error } = await supabase
+    .from('debate_sessions')
+    .select('*')
+    .eq('student_id', student_id)
+    .eq('text_id', text_id)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null
+  return (data as DebateSession) ?? null
+}
+
+/** Tạo mới nếu chưa có phiên đang diễn ra, ngược lại trả về phiên cũ. */
+export async function getOrCreateSession(
+  student_id: string,
+  text_id: string
+): Promise<DebateSession> {
+  const existing = await findActiveSession(student_id, text_id)
+  if (existing) return existing
+  return createSession(student_id, text_id)
 }
 
 export async function updateSessionStatus(
@@ -225,7 +313,10 @@ export async function listSessionsWithDetails(): Promise<DebateSession[]> {
     .select('*, student:students(*), text:texts(*)')
     .order('created_at', { ascending: false })
   if (error) throw error
-  return (data ?? []) as DebateSession[]
+  return (data ?? []).map((row) => {
+    const s = row as DebateSession
+    return { ...s, text: s.text ? normalizeText(s.text) : undefined }
+  })
 }
 
 // --------------------------------------------------------------------------
