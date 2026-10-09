@@ -13,6 +13,12 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
  * - Đồng thời GIẤU API key ở phía server (không lộ ra bundle client như khi gọi
  *   trực tiếp với dangerouslyAllowBrowser).
  *
+ * LƯU Ý VỀ ĐỊNH TUYẾN (Vite + Vercel, KHÔNG phải Next.js):
+ * - Vercel Functions cho project không-Next KHÔNG hỗ trợ catch-all "[...path].ts".
+ *   Vì vậy dùng MỘT file tĩnh `api/groq.ts` + rewrite trong vercel.json:
+ *     "/api/groq/(.*)" → "/api/groq"
+ *   rồi tự bóc path thật từ req.url (bỏ tiền tố "/api/groq").
+ *
  * Ánh xạ đường dẫn:
  *   /api/groq/<rest>  →  https://api.groq.com/<rest>
  * (Groq SDK gọi `${baseURL}/openai/v1/...`, với baseURL = "<origin>/api/groq".)
@@ -35,12 +41,12 @@ const RATE_LIMIT_HEADERS = [
 ]
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Ghép lại phần path phía sau /api/groq (catch-all [...path]).
-  const rest = Array.isArray(req.query.path)
-    ? req.query.path.join('/')
-    : (req.query.path ?? '')
-  const search = req.url?.includes('?') ? `?${req.url.split('?')[1]}` : ''
-  const targetUrl = `${GROQ_ORIGIN}/${rest}${search}`
+  // req.url ví dụ: "/api/groq/openai/v1/chat/completions?foo=bar"
+  // Bóc phần sau "/api/groq" làm path upstream, giữ nguyên query string.
+  const rawUrl = req.url ?? ''
+  const withoutPrefix = rawUrl.replace(/^\/api\/groq/, '')
+  const rest = withoutPrefix.replace(/^\//, '') // bỏ dấu "/" đầu nếu có
+  const targetUrl = `${GROQ_ORIGIN}/${rest}`
 
   const apiKey = process.env.GROQ_API_KEY
   if (!apiKey) {
