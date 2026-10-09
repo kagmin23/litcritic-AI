@@ -269,6 +269,13 @@ begin
     update public.texts set content = coalesce(nullif(content, ''), excerpt)
       where content is null or content = '';
   end if;
+  -- Gỡ NOT NULL của cột cũ `full_text` để insert chỉ-dùng-`content` không lỗi 23502.
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='texts' and column_name='full_text') then
+    alter table public.texts alter column full_text drop not null;
+    update public.texts set full_text = coalesce(nullif(full_text, ''), content)
+      where full_text is null or full_text = '';
+  end if;
 end $$;
 
 update public.texts set keywords = '[]'::jsonb where keywords is null;

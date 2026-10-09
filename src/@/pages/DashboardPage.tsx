@@ -196,7 +196,7 @@ export function DashboardPage() {
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tìm theo tên hoặc thể loại…"
+            placeholder="Tìm kiếm.."
             className="h-9 pl-9"
           />
         </div>

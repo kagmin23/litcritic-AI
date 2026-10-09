@@ -120,18 +120,35 @@ export async function createText(
     return record
   }
 
-  const { data, error } = await supabase
-    .from('texts')
-    .insert({
-      title: input.title,
-      content: input.content,
-      genre: input.genre,
-      keywords: input.keywords,
-      background: input.background,
-      initial_questions: input.initial_questions,
-    })
-    .select()
-    .single()
+  // Payload cơ bản theo schema mới (dùng cột `content`).
+  const base = {
+    title: input.title,
+    content: input.content,
+    genre: input.genre,
+    keywords: input.keywords,
+    background: input.background,
+    initial_questions: input.initial_questions,
+  }
+
+  // Một số DB được tạo theo SCHEMA CŨ còn cột `full_text` NOT NULL. Để tương
+  // thích cả hai, thử insert kèm `full_text` = content trước; nếu DB không có
+  // cột này (schema mới) thì bỏ `full_text` rồi insert lại.
+  const insertOnce = (payload: Record<string, unknown>) =>
+    supabase.from('texts').insert(payload).select().single()
+
+  let { data, error } = await insertOnce({ ...base, full_text: input.content })
+
+  if (error) {
+    const msg = (error.message || '').toLowerCase()
+    const isUnknownColumn =
+      error.code === 'PGRST204' || // PostgREST: cột không có trong schema cache
+      error.code === '42703' || // Postgres: undefined_column
+      msg.includes('full_text')
+    if (isUnknownColumn) {
+      ;({ data, error } = await insertOnce(base))
+    }
+  }
+
   if (error) throw error
   return data as TextItem
 }

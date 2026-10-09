@@ -39,6 +39,23 @@ end $$;
 update public.texts set keywords = '[]'::jsonb where keywords is null;
 update public.texts set initial_questions = '[]'::jsonb where initial_questions is null;
 
+-- 3b) GỠ ràng buộc NOT NULL của cột cũ `full_text` (nếu còn), vì code mới chỉ
+--     ghi vào `content`. Nếu không gỡ, insert sẽ lỗi 23502
+--     ("null value in column full_text violates not-null constraint").
+--     Đồng thời đổ `content` sang `full_text` cho các bản ghi cũ để nhất quán.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'texts' and column_name = 'full_text'
+  ) then
+    alter table public.texts alter column full_text drop not null;
+    update public.texts
+      set full_text = coalesce(nullif(full_text, ''), content)
+      where full_text is null or full_text = '';
+  end if;
+end $$;
+
 -- 4) (Tùy chọn) Kiểm tra lại kết quả:
 --    select id, title, left(content, 60) as content_preview,
 --           keywords, background, initial_questions

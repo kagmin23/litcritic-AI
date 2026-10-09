@@ -16,7 +16,7 @@ import Groq from 'groq-sdk'
 const API_KEY = import.meta.env.VITE_GROQ_API_KEY as string | undefined
 
 /**
- * Model mặc định dùng cho mọi lời gọi: 'llama-3.1-8b-instant'.
+ * Model mặc định dùng cho mọi lời gọi: 'qwen/qwen3.8-27b'.
  * Có thể ghi đè qua biến môi trường VITE_GROQ_MODEL.
  */
 const DEFAULT_MODEL = 'qwen/qwen3.8-27b'
@@ -24,7 +24,12 @@ const MODEL =
   (import.meta.env.VITE_GROQ_MODEL as string | undefined)?.trim() ||
   DEFAULT_MODEL
 
-export const isGroqConfigured = Boolean(API_KEY)
+/**
+ * AI Groq luôn được coi là "đã cấu hình" ở phía CLIENT vì API key thật nằm ở
+ * proxy server (dev: Vite proxy; prod: Vercel function đọc GROQ_API_KEY). Nếu
+ * server thiếu key, proxy sẽ trả lỗi và UI hiển thị thông báo tương ứng.
+ */
+export const isGroqConfigured = true
 
 // ---------------------------------------------------------------------------
 // Theo dõi HẠN NGẠCH (rate limit) từ header phản hồi của Groq.
@@ -124,16 +129,38 @@ function updateRateLimitFromResponse(response: Response): void {
   rateLimitListeners.forEach((fn) => fn(rateLimit))
 }
 
+/**
+ * baseURL trỏ về PROXY nội bộ `/api/groq` (dev: Vite proxy, prod: Vercel
+ * function). Proxy sẽ:
+ *  - gắn API key ở phía server (không lộ ra client),
+ *  - expose các header `x-ratelimit-*` để badge hạn ngạch đọc được.
+ *
+ * Groq SDK tự ghép `${baseURL}/openai/v1/...`, nên baseURL = "<origin>/api/groq"
+ * sẽ gọi "/api/groq/openai/v1/...". API key client (nếu có) chỉ là placeholder
+ * vì proxy mới là nơi gắn Authorization thật.
+ */
+/**
+ * Groq SDK dựng request bằng `new URL(baseURL + path)`, nên baseURL BẮT BUỘC là
+ * URL tuyệt đối (có origin). Dùng origin hiện tại của trình duyệt để trỏ về
+ * proxy cùng domain:
+ *   - Dev:  http://localhost:5173/api/groq
+ *   - Prod: https://<app>.vercel.app/api/groq
+ */
+function resolveBaseUrl(): string {
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'http://localhost:5173'
+  return `${origin}/api/groq`
+}
+
 let client: Groq | null = null
 function getClient(): Groq {
-  if (!API_KEY) {
-    throw new Error(
-      'Thiếu VITE_GROQ_API_KEY. Vui lòng cấu hình API key Groq trong file .env'
-    )
-  }
   if (!client)
     client = new Groq({
-      apiKey: API_KEY,
+      // Proxy gắn Authorization thật; truyền placeholder để SDK không chặn.
+      apiKey: API_KEY || 'proxy',
+      baseURL: resolveBaseUrl(),
       dangerouslyAllowBrowser: true,
     })
   return client

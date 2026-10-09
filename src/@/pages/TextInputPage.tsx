@@ -10,25 +10,30 @@ import { useAuth } from '@/lib/authContext'
 import { ACCEPT_UPLOAD, readUploadedFiles } from '@/lib/fileUtils'
 import { fadeUpItem, staggerContainer } from '@/lib/motion'
 import { useNav } from '@/lib/navigation'
+import { useTwoPanels } from '@/lib/useTwoPanels'
 import { ocrImages } from '@/services/geminiService'
 import { analyzeUnseenText } from '@/services/groqService'
 import {
-  createSession,
   createText,
-  upsertStudent,
+  getOrCreateSession,
+  upsertStudent
 } from '@/services/supabaseService'
 import type { AnalyzedText } from '@/types'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   BookMarked,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   FileText,
   HelpCircle,
   ImageUp,
   Landmark,
   Loader2,
-  Paperclip,
+  PanelLeft,
+  PanelRight,
   Plus,
+  RefreshCw,
   Save,
   ScanText,
   Sparkles,
@@ -84,6 +89,18 @@ export function TextInputPage() {
   const [saving, setSaving] = useState<'save' | 'start' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [draftSaved, setDraftSaved] = useState(false)
+
+  // Bố cục 2 ô: kéo co giãn (có giới hạn) + gập/mở từng ô.
+  const {
+    containerRef,
+    leftOpen,
+    rightOpen,
+    bothOpen,
+    widths,
+    toggleLeft,
+    toggleRight,
+    startDrag,
+  } = useTwoPanels('visef_textinput_panels')
 
   // Tự động lưu bản nháp (debounce) mỗi khi nội dung đổi.
   useEffect(() => {
@@ -267,13 +284,106 @@ export function TextInputPage() {
         user.profile.full_name || user.email,
         user.profile.class_name || '—'
       )
-      const session = await createSession(student.id, textId)
+      // Tạo (hoặc dùng lại) phiên rồi tự động chuyển sang Đấu trường tranh luận
+      // của bài vừa tạo.
+      const session = await getOrCreateSession(student.id, textId)
       localStorage.removeItem(DRAFT_KEY)
       navigate({ name: 'debate', sessionId: session.id })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Khởi tạo phiên thất bại.')
       setSaving(null)
     }
+  }
+  /** Phần NỘI DUNG kết quả (cuộn được) — không gồm nút hành động. */
+  function renderResultBody() {
+    if (!result) return null
+    return (
+      <motion.div
+        key="result"
+        variants={staggerContainer}
+        initial="hidden"
+        animate="show"
+        className="flex flex-col gap-3.5"
+      >
+        <motion.div variants={fadeUpItem}>
+          <h3 className="font-heading text-lg font-semibold">{result.title}</h3>
+          <Badge variant="secondary" className="mt-1">
+            {result.genre}
+          </Badge>
+        </motion.div>
+
+        <motion.div variants={fadeUpItem}>
+          <SectionLabel icon={BookMarked} text="Từ khó / Hán-Việt" />
+          {result.keywords.length === 0 ? (
+            <p className="text-sm text-muted-foreground">—</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {result.keywords.map((k, i) => (
+                <span
+                  key={i}
+                  className="rounded-lg bg-amber-100 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
+                  title={k.meaning}
+                >
+                  <strong>{k.term}</strong>
+                  {k.meaning ? ` — ${k.meaning}` : ''}
+                </span>
+              ))}
+            </div>
+          )}
+        </motion.div>
+
+        <motion.div variants={fadeUpItem}>
+          <SectionLabel icon={Landmark} text="Bối cảnh lịch sử - văn hóa" />
+          <p className="rounded-lg bg-muted/50 p-3 text-sm leading-relaxed">
+            {result.background || '—'}
+          </p>
+        </motion.div>
+
+        <motion.div variants={fadeUpItem}>
+          <SectionLabel icon={HelpCircle} text="Câu hỏi định hướng" />
+          <ol className="space-y-1.5">
+            {result.initial_questions.map((q, i) => (
+              <li key={i} className="flex gap-2 text-sm">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+                  {i + 1}
+                </span>
+                {q}
+              </li>
+            ))}
+          </ol>
+        </motion.div>
+      </motion.div>
+    )
+  }
+
+  /** Hai nút hành động — đặt ở footer cố định (và trong Dialog phóng to). */
+  function renderActions() {
+    if (!result) return null
+    return (
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button
+          variant="outline"
+          className="flex-1"
+          onClick={handleSave}
+          disabled={saving !== null}
+        >
+          {saving === 'save' ? <Loader2 className="animate-spin" /> : <Save />}
+          Lưu vào thư viện
+        </Button>
+        <Button
+          className="flex-1"
+          onClick={handleSaveAndStart}
+          disabled={saving !== null}
+        >
+          {saving === 'start' ? (
+            <Loader2 className="animate-spin" />
+          ) : (
+            <Swords />
+          )}
+          Lưu & Tranh luận
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -317,10 +427,40 @@ export function TextInputPage() {
 
       <PendingBanner />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Cột nhập liệu */}
-        <Card>
-          <CardContent className="p-4">
+      <div
+        ref={containerRef}
+        className="flex min-h-0 flex-col gap-4 lg:h-[calc(100vh-12rem)] lg:flex-row lg:items-stretch lg:gap-0"
+      >
+        {/* ===== Ô TRÁI — Nhập liệu ===== */}
+        {leftOpen ? (
+          <Card
+            className="flex w-full shrink-0 flex-col lg:h-full lg:w-[var(--panel-w)]"
+            style={{
+              ['--panel-w' as string]: `${widths.left}%`,
+            }}
+          >
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-0">
+            {/* Thanh tiêu đề ô (cố định) */}
+            <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-4">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase">
+                <FileText className="size-3.5" /> Nhập ngữ liệu
+              </span>
+              {bothOpen && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="hidden shrink-0 lg:inline-flex"
+                  onClick={toggleLeft}
+                  title="Thu gọn ô nhập liệu"
+                  aria-label="Thu gọn ô nhập liệu"
+                >
+                  <PanelLeft className="size-4" />
+                </Button>
+              )}
+            </div>
+
+            {/* Vùng nội dung CUỘN */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4">
             <Tabs defaultValue="text">
               <TabsList className="w-full">
                 <TabsTrigger value="text">
@@ -340,12 +480,12 @@ export function TextInputPage() {
                 />
                 <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                   <span>{rawText.trim().length} ký tự</span>
-                  <button
+                  {/* <button
                     onClick={() => fileRef.current?.click()}
-                    className="flex items-center gap-1 font-medium text-primary hover:underline"
+                    className="font-medium text-primary hover:underline"
                   >
-                    <Paperclip className="size-3.5" /> Tải ảnh / tệp .txt
-                  </button>
+                    Tải ảnh / tệp .txt
+                  </button> */}
                 </div>
               </TabsContent>
 
@@ -469,34 +609,83 @@ export function TextInputPage() {
                 )}
               </TabsContent>
             </Tabs>
+            </div>
 
-            <Button
-              className="mt-3 h-10 w-full"
-              onClick={handleAnalyze}
-              disabled={analyzing || locked || ocrLoading}
-              title={
-                locked
-                  ? 'Chờ phê duyệt để mở khóa'
-                  : ocrLoading
-                    ? 'Đang nhận dạng ảnh…'
-                    : undefined
-              }
-            >
-              {analyzing ? <Loader2 className="animate-spin" /> : <Sparkles />}
-              {analyzing ? 'Đang phân tích…' : 'Phân tích Ngữ liệu với AI'}
-            </Button>
+            {/* Footer CỐ ĐỊNH — nút phân tích */}
+            <div className="shrink-0 border-t px-4 py-3">
+              <Button
+                className="h-10 w-full"
+                onClick={handleAnalyze}
+                disabled={analyzing || locked || ocrLoading}
+                title={
+                  locked
+                    ? 'Chờ phê duyệt để mở khóa'
+                    : ocrLoading
+                      ? 'Đang nhận dạng ảnh…'
+                      : undefined
+                }
+              >
+                {analyzing ? (
+                  <Loader2 className="animate-spin" />
+                ) : result ? (
+                  <RefreshCw />
+                ) : (
+                  <Sparkles />
+                )}
+                {analyzing
+                  ? 'Đang phân tích…'
+                  : result
+                    ? 'Phân tích lại'
+                    : 'Phân tích Ngữ liệu với AI'}
+              </Button>
 
-            {error && (
-              <p className="mt-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
-                {error}
-              </p>
-            )}
+              {error && (
+                <p className="mt-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+            </div>
           </CardContent>
-        </Card>
+          </Card>
+        ) : (
+          <CollapsedBar side="left" label="Nhập liệu" onExpand={toggleLeft} />
+        )}
 
-        {/* Cột kết quả */}
-        <Card className="overflow-hidden">
-          <CardContent className="p-4">
+        {/* Thanh kéo co giãn (chỉ khi cả 2 ô đang mở) */}
+        {bothOpen && <ResizeHandle onPointerDown={startDrag} />}
+
+        {/* ===== Ô PHẢI — Kết quả ===== */}
+        {rightOpen ? (
+          <Card
+            className="flex w-full shrink-0 flex-col lg:w-[var(--panel-w)]"
+            style={{
+              ['--panel-w' as string]: `${widths.right}%`,
+            }}
+          >
+          <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+            {/* Thanh tiêu đề ô (cố định) + nút phóng to + gập */}
+            <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-4 pb-2">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase">
+                <Sparkles className="size-3.5" /> Kết quả phân tích
+              </span>
+              <div className="flex shrink-0 items-center gap-1">
+                {bothOpen && (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="hidden lg:inline-flex"
+                    onClick={toggleRight}
+                    title="Thu gọn ô kết quả"
+                    aria-label="Thu gọn ô kết quả"
+                  >
+                    <PanelRight className="size-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Vùng nội dung CUỘN */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-2">
             {analyzing && (
               <div className="space-y-3">
                 <Skeleton className="h-6 w-48" />
@@ -520,101 +709,67 @@ export function TextInputPage() {
             )}
 
             <AnimatePresence mode="wait">
-              {!analyzing && result && (
-                <motion.div
-                  key="result"
-                  variants={staggerContainer}
-                  initial="hidden"
-                  animate="show"
-                  className="space-y-3.5"
-                >
-                  <motion.div variants={fadeUpItem}>
-                    <h3 className="font-heading text-lg font-semibold">
-                      {result.title}
-                    </h3>
-                    <Badge variant="secondary" className="mt-1">
-                      {result.genre}
-                    </Badge>
-                  </motion.div>
-
-                  <motion.div variants={fadeUpItem}>
-                    <SectionLabel icon={BookMarked} text="Từ khó / Hán-Việt" />
-                    {result.keywords.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">—</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-1.5">
-                        {result.keywords.map((k, i) => (
-                          <span
-                            key={i}
-                            className="rounded-lg bg-amber-100 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
-                            title={k.meaning}
-                          >
-                            <strong>{k.term}</strong>
-                            {k.meaning ? ` — ${k.meaning}` : ''}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </motion.div>
-
-                  <motion.div variants={fadeUpItem}>
-                    <SectionLabel icon={Landmark} text="Bối cảnh lịch sử - văn hóa" />
-                    <p className="rounded-lg bg-muted/50 p-3 text-sm leading-relaxed">
-                      {result.background || '—'}
-                    </p>
-                  </motion.div>
-
-                  <motion.div variants={fadeUpItem}>
-                    <SectionLabel icon={HelpCircle} text="Câu hỏi định hướng" />
-                    <ol className="space-y-1.5">
-                      {result.initial_questions.map((q, i) => (
-                        <li key={i} className="flex gap-2 text-sm">
-                          <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-                            {i + 1}
-                          </span>
-                          {q}
-                        </li>
-                      ))}
-                    </ol>
-                  </motion.div>
-
-                  <motion.div
-                    variants={fadeUpItem}
-                    className="flex flex-col gap-2 pt-1 sm:flex-row"
-                  >
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={handleSave}
-                      disabled={saving !== null}
-                    >
-                      {saving === 'save' ? (
-                        <Loader2 className="animate-spin" />
-                      ) : (
-                        <Save />
-                      )}
-                      Lưu vào thư viện
-                    </Button>
-                    <Button
-                      className="flex-1"
-                      onClick={handleSaveAndStart}
-                      disabled={saving !== null}
-                    >
-                      {saving === 'start' ? (
-                        <Loader2 className="animate-spin" />
-                      ) : (
-                        <Swords />
-                      )}
-                      Lưu & Tranh luận
-                    </Button>
-                  </motion.div>
-                </motion.div>
-              )}
+              {!analyzing && result && renderResultBody()}
             </AnimatePresence>
+            </div>
+
+            {/* Footer CỐ ĐỊNH — nút hành động (chỉ khi đã có kết quả) */}
+            {!analyzing && result && (
+              <div className="shrink-0 border-t px-4 py-3">{renderActions()}</div>
+            )}
           </CardContent>
-        </Card>
+          </Card>
+        ) : (
+          <CollapsedBar side="right" label="Kết quả" onExpand={toggleRight} />
+        )}
       </div>
     </div>
+  )
+}
+
+/** Thanh kéo co giãn giữa 2 ô (chỉ hiện trên desktop). */
+function ResizeHandle({
+  onPointerDown,
+}: {
+  onPointerDown: (e: React.PointerEvent) => void
+}) {
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      className="group hidden w-3 shrink-0 cursor-col-resize items-center justify-center lg:flex"
+      role="separator"
+      aria-orientation="vertical"
+    >
+      <div className="h-16 w-1 rounded-full bg-border transition-colors group-hover:bg-primary/60" />
+    </div>
+  )
+}
+
+/** Thanh dọc mảnh khi một ô bị gập — bấm để mở lại. */
+function CollapsedBar({
+  side,
+  label,
+  onExpand,
+}: {
+  side: 'left' | 'right'
+  label: string
+  onExpand: () => void
+}) {
+  const Icon = side === 'left' ? ChevronRight : ChevronLeft
+  return (
+    <button
+      onClick={onExpand}
+      title={`Mở lại ô ${label}`}
+      className="hidden w-10 shrink-0 flex-col items-center gap-2 self-stretch rounded-xl bg-card py-3 ring-1 ring-foreground/10 transition-colors hover:bg-muted lg:flex"
+    >
+      <Icon className="size-4 text-muted-foreground" />
+      <span
+        className="text-xs font-medium text-muted-foreground"
+        style={{ writingMode: 'vertical-rl' }}
+      >
+        {label}
+      </span>
+    </button>
   )
 }
 
