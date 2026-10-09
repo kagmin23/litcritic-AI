@@ -3,10 +3,10 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ROLE_LABEL, useAuth } from '@/lib/authContext'
 import { useNav, type Route } from '@/lib/navigation'
@@ -14,18 +14,17 @@ import type { UserRole } from '@/types'
 import { cn } from 'cn'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  Activity,
-  Clock,
-  FilePlus2,
-  FlaskConical,
-  GraduationCap,
-  LayoutDashboard,
-  LogOut,
-  Menu,
-  PanelLeftClose,
-  PanelLeftOpen,
-  UsersRound,
-  X,
+    Activity,
+    Clock,
+    FilePlus2,
+    GraduationCap,
+    LayoutDashboard,
+    LogOut,
+    Menu,
+    PanelLeftClose,
+    PanelLeftOpen,
+    UsersRound,
+    X
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -52,13 +51,6 @@ const NAV_ITEMS: NavItem[] = [
     route: { name: 'textInput' },
     match: ['textInput'],
     roles: ['student', 'teacher'],
-  },
-  {
-    label: 'Nghiên cứu ViSEF',
-    icon: FlaskConical,
-    route: { name: 'admin' },
-    match: ['admin'],
-    roles: ['teacher'],
   },
   // Quản trị — chỉ admin
   {

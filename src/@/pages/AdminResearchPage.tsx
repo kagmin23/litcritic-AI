@@ -2,27 +2,27 @@ import { RoundtableChat } from '@/components/RoundtableChat'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from '@/components/ui/card'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
 } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/lib/authContext'
 import { exportInteractionCsv, exportSessionSummaryCsv } from '@/lib/csv'
@@ -32,26 +32,26 @@ import { computeAssessment } from '@/lib/scoring'
 import { isSupabaseConfigured } from '@/lib/supabaseClient'
 import { usePresence } from '@/lib/usePresence'
 import {
-  listAllLogs,
-  listSessionsWithDetails,
+    listAllLogs,
+    listSessionsWithDetails,
 } from '@/services/supabaseService'
 import type { DebateSession, InteractionLog } from '@/types'
 import { motion } from 'framer-motion'
 import {
-  ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
-  Database,
-  Download,
-  Eye,
-  FileSpreadsheet,
-  FlaskConical,
-  Radio,
-  Users,
+    ArrowLeft,
+    ChevronLeft,
+    ChevronRight,
+    Database,
+    Download,
+    Eye,
+    FileSpreadsheet,
+    FlaskConical,
+    Radio,
+    Users,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-/** Trang Nghiên cứu ViSEF — dành cho giáo viên (và admin nếu cần). */
+/** Trang Tổng quan — theo dõi phiên tranh luận (dành cho học sinh & giáo viên). */
 export function AdminResearchPage() {
   const { navigate } = useNav()
   const { user } = useAuth()
@@ -175,7 +175,7 @@ export function AdminResearchPage() {
             <FlaskConical className="size-5" />
           </div>
           <div>
-            <h1 className="font-heading text-2xl font-bold">Nghiên cứu ViSEF</h1>
+            <h1 className="font-heading text-2xl font-bold">Tổng quan</h1>
             <p className="text-sm text-muted-foreground">
               Theo dõi phiên học sinh, Interaction Logs và xuất CSV cho SPSS /
               Python (t-test, p-value).

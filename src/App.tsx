@@ -28,8 +28,8 @@ const CONTENT_ROUTES: Route['name'][] = [
   'debate',
   'report',
 ]
-// Nghiên cứu ViSEF — chỉ teacher
-const TEACHER_ONLY: Route['name'][] = ['admin']
+// Tổng quan — cho student & teacher (admin không dùng)
+const NON_ADMIN_ONLY: Route['name'][] = ['admin']
 
 function Routed() {
   const { user, loading, hasRole } = useAuth()
@@ -52,18 +52,11 @@ function Routed() {
     } else if (user && isAdmin && CONTENT_ROUTES.includes(route.name)) {
       // Admin không làm nghiệp vụ nội dung → đưa về quản lý user.
       redirect = { name: 'userMgmt' }
-    } else if (user && isAdmin && TEACHER_ONLY.includes(route.name)) {
-      // Admin không vào trang nghiên cứu teacher.
+    } else if (user && isAdmin && NON_ADMIN_ONLY.includes(route.name)) {
+      // Admin không vào trang Tổng quan (dành cho student & teacher).
       redirect = { name: 'userMgmt' }
     } else if (user && !isAdmin && ADMIN_ONLY.includes(route.name)) {
       // Không phải admin mà cố vào trang admin → về dashboard.
-      redirect = { name: 'dashboard' }
-    } else if (
-      user &&
-      !hasRole('teacher', 'admin') &&
-      TEACHER_ONLY.includes(route.name)
-    ) {
-      // Học sinh không vào trang nghiên cứu.
       redirect = { name: 'dashboard' }
     }
 

@@ -41,11 +41,11 @@ const NAV_ITEMS: NavItem[] = [
     roles: ['student', 'teacher'],
   },
   {
-    label: 'Nghiên cứu ViSEF',
+    label: 'Tổng quan',
     icon: FlaskConical,
     route: { name: 'admin' },
     match: ['admin'],
-    roles: ['teacher'],
+    roles: ['student', 'teacher'],
   },
 ]
 
