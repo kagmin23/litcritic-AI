@@ -85,6 +85,7 @@ export function TopNav({ variant }: { variant: 'student' | 'teacher' }) {
     <header
       className={cn(
         'sticky top-0 z-30 w-full border-b',
+        route.name !== 'debate' && 'app-ui-scale',
         isStudent
           ? 'glass border-sky-200/60 dark:border-sky-900/40'
           : 'glass border-indigo-200/60 dark:border-indigo-900/40'

@@ -10,6 +10,7 @@ import { fadeUpItem, staggerContainer } from '@/lib/motion'
 import { useNav } from '@/lib/navigation'
 import { isSupabaseConfigured } from '@/lib/supabaseClient'
 import { isGeminiConfigured } from '@/services/geminiService'
+import { isGroqConfigured } from '@/services/groqService'
 import {
     getOrCreateSession,
     listTexts,
@@ -158,14 +159,19 @@ export function DashboardPage() {
       </motion.div>
 
       {/* Cảnh báo cấu hình (chỉ khi thiếu) */}
-      {(!isSupabaseConfigured || !isGeminiConfigured) && (
+      {(!isSupabaseConfigured || !isGroqConfigured || !isGeminiConfigured) && (
         <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
           <AlertCircle className="mt-0.5 size-5 shrink-0" />
           <div className="space-y-0.5">
             <p className="font-medium">Lưu ý cấu hình môi trường (.env)</p>
+            {!isGroqConfigured && (
+              <p className="text-amber-700 dark:text-amber-300">
+                Thiếu <code>VITE_GROQ_API_KEY</code> — tính năng AI (phân tích & tranh luận) chưa hoạt động.
+              </p>
+            )}
             {!isGeminiConfigured && (
               <p className="text-amber-700 dark:text-amber-300">
-                Thiếu <code>VITE_GEMINI_API_KEY</code> — tính năng AI chưa hoạt động.
+                Thiếu <code>VITE_GEMINI_API_KEY</code> — tính năng OCR ảnh chưa hoạt động.
               </p>
             )}
             {!isSupabaseConfigured && (

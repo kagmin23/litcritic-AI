@@ -104,6 +104,7 @@ function Routed() {
         <AnimatePresence mode="wait">
           <motion.div
             key={route.name}
+            className="app-ui-scale"
             variants={pageVariants}
             initial="initial"
             animate="animate"
@@ -153,6 +154,7 @@ function Routed() {
         <AnimatePresence mode="wait">
           <motion.div
             key={route.name}
+            className="app-ui-scale"
             variants={pageVariants}
             initial="initial"
             animate="animate"

@@ -62,3 +62,10 @@ export async function readUploadedFile(file: File): Promise<ReadFileResult> {
   }
   return { kind: 'unsupported', fileName: file.name }
 }
+
+/** Đọc nhiều file một lượt (ảnh + txt lẫn lộn). */
+export async function readUploadedFiles(
+  files: File[]
+): Promise<ReadFileResult[]> {
+  return Promise.all(files.map((f) => readUploadedFile(f)))
+}

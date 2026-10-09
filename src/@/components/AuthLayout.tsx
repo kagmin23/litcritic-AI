@@ -43,9 +43,9 @@ export function AuthLayout({
             transition={{ duration: 0.5, delay: 0.1 }}
             className="font-heading text-4xl leading-tight font-bold"
           >
-            Tư duy phản biện
+            TƯ DUY PHẢN BIỆN
             <br />
-            trong Đọc hiểu Ngữ văn
+            & TIẾP NHẬN VĂN HỌC ĐA CHIỀU
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 16 }}

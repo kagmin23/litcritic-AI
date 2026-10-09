@@ -68,6 +68,20 @@ export async function upsertStudent(
     return record
   }
 
+  // Upsert thật sự: tìm học sinh đã tồn tại (cùng họ tên + lớp) để TÁI SỬ DỤNG
+  // id ổn định. Nếu luôn insert mới, mỗi lần vào Đấu trường sẽ sinh student_id
+  // khác nhau → không tìm lại được phiên cũ → mất lịch sử tranh luận.
+  const { data: existing, error: findErr } = await supabase
+    .from('students')
+    .select('*')
+    .eq('full_name', full_name)
+    .eq('class_name', class_name)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (findErr) throw findErr
+  if (existing) return existing as Student
+
   const { data, error } = await supabase
     .from('students')
     .insert({ full_name, class_name })
@@ -254,13 +268,49 @@ export async function findActiveSession(
   return (data as DebateSession) ?? null
 }
 
-/** Tạo mới nếu chưa có phiên đang diễn ra, ngược lại trả về phiên cũ. */
+/**
+ * Tìm phiên GẦN NHẤT của 1 học sinh với 1 ngữ liệu, BẤT KỂ trạng thái
+ * (active hoặc completed). Dùng để quay lại một bài học đã học trước đó mà vẫn
+ * thấy đầy đủ lịch sử tranh luận (kể cả khi đã bấm "Kết thúc").
+ */
+export async function findLatestSession(
+  student_id: string,
+  text_id: string
+): Promise<DebateSession | null> {
+  if (!isSupabaseConfigured) {
+    const list = lsRead<DebateSession>(LS_KEYS.sessions)
+    return (
+      list
+        .filter((s) => s.student_id === student_id && s.text_id === text_id)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
+    )
+  }
+  const { data, error } = await supabase
+    .from('debate_sessions')
+    .select('*')
+    .eq('student_id', student_id)
+    .eq('text_id', text_id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null
+  return (data as DebateSession) ?? null
+}
+
+/**
+ * Trả về phiên để tiếp tục học, theo thứ tự ưu tiên:
+ *   1) phiên đang diễn ra (active) gần nhất,
+ *   2) phiên gần nhất bất kỳ (completed) để xem lại/tiếp tục lịch sử,
+ *   3) tạo phiên mới nếu học sinh chưa từng tranh luận về ngữ liệu này.
+ */
 export async function getOrCreateSession(
   student_id: string,
   text_id: string
 ): Promise<DebateSession> {
-  const existing = await findActiveSession(student_id, text_id)
-  if (existing) return existing
+  const active = await findActiveSession(student_id, text_id)
+  if (active) return active
+  const latest = await findLatestSession(student_id, text_id)
+  if (latest) return latest
   return createSession(student_id, text_id)
 }
 

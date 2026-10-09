@@ -4,38 +4,138 @@ import type {
   InteractionLog,
   MultiAgentTurn,
 } from '@/types'
-import { GoogleGenAI } from '@google/genai'
-
-import {
-  ocrImageTesseract,
-  ocrImagesTesseract,
-} from '@/services/tesseractService'
+import Groq from 'groq-sdk'
 
 /**
- * AI Engine — Google Gemini (SDK @google/genai).
- * Cấu hình API key FREE qua biến môi trường: VITE_GEMINI_API_KEY
+ * AI Engine — Groq (SDK groq-sdk).
+ * Cấu hình API key qua biến môi trường: VITE_GROQ_API_KEY
+ *
+ * Bản sao của geminiService.ts, giữ NGUYÊN toàn bộ tên exported functions,
+ * tham số và kiểu dữ liệu TypeScript để tương thích 100% với UI hiện tại.
  */
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
+const API_KEY = import.meta.env.VITE_GROQ_API_KEY as string | undefined
 
 /**
- * Model mặc định — Gemini FREE ban đầu: 'gemini-1.5-flash'.
- * Có thể ghi đè qua biến môi trường VITE_GEMINI_MODEL.
+ * Model mặc định dùng cho mọi lời gọi: 'llama-3.1-8b-instant'.
+ * Có thể ghi đè qua biến môi trường VITE_GROQ_MODEL.
  */
-const DEFAULT_MODEL = 'gemini-1.5-flash'
+const DEFAULT_MODEL = 'qwen/qwen3.8-27b'
 const MODEL =
-  (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() ||
+  (import.meta.env.VITE_GROQ_MODEL as string | undefined)?.trim() ||
   DEFAULT_MODEL
 
-export const isGeminiConfigured = Boolean(API_KEY)
+export const isGroqConfigured = Boolean(API_KEY)
 
-let client: GoogleGenAI | null = null
-function getClient(): GoogleGenAI {
+// ---------------------------------------------------------------------------
+// Theo dõi HẠN NGẠCH (rate limit) từ header phản hồi của Groq.
+// Groq trả về các header x-ratelimit-* trên MỖI phản hồi. Ta đọc chúng rồi
+// phát (publish) cho UI qua một store nhỏ gọn (observable) để hiển thị badge
+// "số lượt API còn lại" mà không cần thư viện state ngoài.
+// ---------------------------------------------------------------------------
+export interface RateLimitInfo {
+  /** Số request còn lại trong cửa sổ hiện tại (header x-ratelimit-remaining-requests). */
+  remainingRequests: number | null
+  /** Hạn mức request tối đa của cửa sổ (header x-ratelimit-limit-requests). */
+  limitRequests: number | null
+  /** Số token còn lại (header x-ratelimit-remaining-tokens) — tham khảo. */
+  remainingTokens: number | null
+  /** Thời điểm cập nhật gần nhất (ms). */
+  updatedAt: number
+}
+
+/** Khóa lưu snapshot hạn ngạch gần nhất vào localStorage. */
+const RATE_LIMIT_KEY = 'visef_groq_ratelimit'
+/**
+ * Ngưỡng "quá cũ": bỏ qua snapshot đã lưu nếu quá 1 giờ. Cửa sổ rate limit của
+ * Groq reset theo phút/giờ nên số liệu cũ hơn mốc này dễ sai lệch → không khôi phục.
+ */
+const RATE_LIMIT_MAX_AGE_MS = 60 * 60 * 1000
+
+const rateLimitListeners = new Set<(info: RateLimitInfo | null) => void>()
+
+/** Nạp snapshot đã lưu khi khởi động (bỏ qua nếu thiếu/hỏng/quá cũ). */
+function loadPersistedRateLimit(): RateLimitInfo | null {
+  try {
+    const raw = localStorage.getItem(RATE_LIMIT_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as RateLimitInfo
+    if (
+      typeof parsed?.remainingRequests !== 'number' ||
+      typeof parsed?.updatedAt !== 'number'
+    ) {
+      return null
+    }
+    // Bỏ qua số liệu quá cũ.
+    if (Date.now() - parsed.updatedAt > RATE_LIMIT_MAX_AGE_MS) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+// Khởi tạo bằng giá trị gần nhất đã lưu để badge hiện ngay khi mở lại app.
+let rateLimit: RateLimitInfo | null = loadPersistedRateLimit()
+
+/** Lấy nhanh snapshot hạn ngạch hiện tại (hoặc null nếu chưa gọi API lần nào). */
+export function getRateLimit(): RateLimitInfo | null {
+  return rateLimit
+}
+
+/**
+ * Đăng ký lắng nghe thay đổi hạn ngạch. Trả về hàm hủy đăng ký.
+ * Gọi listener ngay một lần với giá trị hiện tại để UI khởi tạo đúng trạng thái.
+ */
+export function subscribeRateLimit(
+  listener: (info: RateLimitInfo | null) => void
+): () => void {
+  rateLimitListeners.add(listener)
+  listener(rateLimit)
+  return () => rateLimitListeners.delete(listener)
+}
+
+/** Parse một header dạng số (bỏ qua nếu thiếu / không hợp lệ). */
+function parseIntHeader(value: string | null): number | null {
+  if (value == null) return null
+  const n = Number.parseInt(value, 10)
+  return Number.isNaN(n) ? null : n
+}
+
+/** Đọc các header x-ratelimit-* từ Response rồi phát cho UI. */
+function updateRateLimitFromResponse(response: Response): void {
+  const h = response.headers
+  const remainingRequests = parseIntHeader(
+    h.get('x-ratelimit-remaining-requests')
+  )
+  // Nếu header chính (remaining-requests) không có thì không cập nhật.
+  if (remainingRequests == null) return
+
+  rateLimit = {
+    remainingRequests,
+    limitRequests: parseIntHeader(h.get('x-ratelimit-limit-requests')),
+    remainingTokens: parseIntHeader(h.get('x-ratelimit-remaining-tokens')),
+    updatedAt: Date.now(),
+  }
+  // Lưu lại để khôi phục khi mở lại app (số liệu "gần nhất đã biết").
+  try {
+    localStorage.setItem(RATE_LIMIT_KEY, JSON.stringify(rateLimit))
+  } catch {
+    /* bỏ qua lỗi quota/private mode */
+  }
+  rateLimitListeners.forEach((fn) => fn(rateLimit))
+}
+
+let client: Groq | null = null
+function getClient(): Groq {
   if (!API_KEY) {
     throw new Error(
-      'Thiếu VITE_GEMINI_API_KEY. Vui lòng cấu hình API key Gemini (FREE) trong file .env'
+      'Thiếu VITE_GROQ_API_KEY. Vui lòng cấu hình API key Groq trong file .env'
     )
   }
-  if (!client) client = new GoogleGenAI({ apiKey: API_KEY })
+  if (!client)
+    client = new Groq({
+      apiKey: API_KEY,
+      dangerouslyAllowBrowser: true,
+    })
   return client
 }
 
@@ -70,36 +170,56 @@ function isQuotaError(err: unknown): boolean {
   )
 }
 
+/** Một tin nhắn trong hội thoại chat theo chuẩn OpenAI/Groq. */
+type ChatMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+/** Tùy chọn cho mỗi lời gọi: bật JSON mode và chỉnh temperature. */
+type GenerateOptions = {
+  json?: boolean
+  temperature?: number
+}
+
 /**
- * Gọi Gemini generateContent với cơ chế TỰ ĐỘNG THỬ LẠI (Exponential Backoff)
- * khi gặp lỗi tạm thời (503 Service Unavailable, 429 Too Many Requests…).
+ * Gọi Groq chat.completions.create với cơ chế TỰ ĐỘNG THỬ LẠI
+ * (Exponential Backoff) khi gặp lỗi tạm thời (503 / 429 / timeout…).
  *
- * - Chỉ dùng DUY NHẤT một model ổn định (MODEL). KHÔNG fallback sang model khác
- *   khi gặp lỗi, tránh rơi vào model không tồn tại / quá tải.
+ * - Chỉ dùng DUY NHẤT một model ổn định (MODEL). KHÔNG fallback sang model khác.
  * - Tối đa `retries` lần thử lại. Thời gian chờ tăng theo cấp số nhân:
- *   base * 2^attempt, cộng thêm jitter ngẫu nhiên để tránh "thundering herd",
- *   và bị giới hạn trần bởi `maxDelayMs`.
- * - Lỗi 429 (hạn ngạch) chờ gấp đôi so với lỗi khác để nhẹ quota.
+ *   base * 2^attempt, cộng jitter ngẫu nhiên, bị chặn trần bởi `maxDelayMs`.
+ * - Lỗi 429 (hạn ngạch) chờ gấp đôi so với lỗi khác.
  * - Hết lượt thử → ném thông báo thân thiện cho UI.
  */
 async function generateWithRetry(
-  params: Omit<
-    Parameters<GoogleGenAI['models']['generateContent']>[0],
-    'model'
-  >,
+  messages: ChatMessage[],
+  options: GenerateOptions = {},
   { retries = 4, baseDelayMs = 1000, maxDelayMs = 16000 } = {}
 ): Promise<string> {
-  const ai = getClient()
+  const groq = getClient()
   let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await ai.models.generateContent({ ...params, model: MODEL })
-      return res.text ?? ''
+      // Dùng .withResponse() để lấy đồng thời dữ liệu đã parse VÀ Response thô
+      // (chứa header x-ratelimit-*). Nhờ đó cập nhật được badge hạn ngạch.
+      const { data, response } = await groq.chat.completions
+        .create({
+          messages,
+          model: MODEL,
+          temperature: options.temperature ?? 0.7,
+          ...(options.json
+            ? { response_format: { type: 'json_object' as const } }
+            : {}),
+        })
+        .withResponse()
+      updateRateLimitFromResponse(response)
+      return data.choices[0]?.message?.content ?? ''
     } catch (err) {
       lastErr = err
 
-      // Hết lượt hoặc lỗi không thể thử lại (ví dụ 400 sai request, 401/403
-      // sai key, 404 sai model) → dừng ngay, không backoff vô ích.
+      // Hết lượt hoặc lỗi không thể thử lại (400 sai request, 401/403 sai key,
+      // 404 sai model) → dừng ngay, không backoff vô ích.
       if (attempt === retries || !isRetryable(err)) break
 
       // Exponential backoff: base * 2^attempt (có jitter), chặn trần maxDelayMs.
@@ -110,7 +230,7 @@ async function generateWithRetry(
       const delay = Math.min(exp * quotaFactor + jitter, maxDelayMs)
 
       console.warn(
-        `[Gemini] Lỗi tạm thời (thử lại ${attempt + 1}/${retries} sau ${delay}ms):`,
+        `[Groq] Lỗi tạm thời (thử lại ${attempt + 1}/${retries} sau ${delay}ms):`,
         err instanceof Error ? err.message : err
       )
       await sleep(delay)
@@ -119,7 +239,7 @@ async function generateWithRetry(
   // Hết lượt thử → ném lỗi thân thiện (UI hiển thị, không crash).
   if (isRetryable(lastErr)) {
     throw new Error(
-      'Máy chủ AI (Gemini) đang quá tải tạm thời. Vui lòng thử gửi lại sau giây lát.'
+      'Máy chủ AI (Groq) đang quá tải tạm thời. Vui lòng thử gửi lại sau giây lát.'
     )
   }
   throw new Error(lastErr instanceof Error ? lastErr.message : String(lastErr))
@@ -149,7 +269,7 @@ function safeParse<T>(raw: string, fallback: T): T {
   try {
     return JSON.parse(extractJson(raw)) as T
   } catch (err) {
-    console.error('[Gemini] Không parse được JSON:', err, raw)
+    console.error('[Groq] Không parse được JSON:', err, raw)
     return fallback
   }
 }
@@ -161,19 +281,19 @@ function clamp(n: unknown, min = 0, max = 10): number {
 }
 
 // ---------------------------------------------------------------------------
-// 1) Phân tích ngữ liệu mới (có thể kèm OCR ảnh)
+// 1) Phân tích ngữ liệu mới
 // ---------------------------------------------------------------------------
+// Lưu ý: model 'llama-3.1-8b-instant' là model VĂN BẢN (không hỗ trợ ảnh).
+// Giữ nguyên tham số imageBase64 để tương thích UI, nhưng chỉ phân tích phần
+// văn bản người dùng nhập.
 export async function analyzeUnseenText(
   text: string,
   imageBase64?: string
 ): Promise<AnalyzedText> {
+  void imageBase64 // model văn bản không xử lý ảnh — bỏ qua an toàn
+
   const instruction = `Bạn là chuyên gia Ngữ văn bám sát Chương trình GDPT 2018.
 Nhiệm vụ: tiếp nhận một ngữ liệu văn học MỚI (unseen text) và bóc tách thông tin phục vụ dạy đọc hiểu.
-${
-  imageBase64
-    ? 'Ảnh đính kèm là trang sách/tư liệu. Hãy đóng vai OCR, trích xuất CHÍNH XÁC toàn bộ chữ TIẾNG VIỆT (giữ đúng dấu thanh, xuống dòng theo khổ thơ/đoạn).'
-    : ''
-}
 Hãy trả về DUY NHẤT một đối tượng JSON hợp lệ theo schema sau, KHÔNG kèm giải thích:
 {
   "title": "nhan đề (tự đặt nếu thiếu)",
@@ -185,27 +305,17 @@ Hãy trả về DUY NHẤT một đối tượng JSON hợp lệ theo schema sau
 }
 Yêu cầu: keywords tối đa 8 mục; initial_questions đúng 3 câu.`
 
-  const parts: Array<Record<string, unknown>> = [
-    { text: instruction },
-    { text: `NGỮ LIỆU (văn bản người dùng nhập):\n${text || '(trống — hãy lấy từ ảnh)'}` },
-  ]
-  if (imageBase64) {
-    const data = imageBase64.includes(',')
-      ? imageBase64.split(',')[1]
-      : imageBase64
-    const mimeMatch = imageBase64.match(/^data:(.*?);base64,/)
-    parts.push({
-      inlineData: {
-        mimeType: mimeMatch?.[1] ?? 'image/png',
-        data,
-      },
-    })
-  }
+  const userPrompt = `NGỮ LIỆU (văn bản người dùng nhập):\n${
+    text || '(trống)'
+  }`
 
-  const raw = await generateWithRetry({
-    contents: [{ role: 'user', parts }],
-    config: { responseMimeType: 'application/json', temperature: 0.3 },
-  })
+  const raw = await generateWithRetry(
+    [
+      { role: 'system', content: instruction },
+      { role: 'user', content: userPrompt },
+    ],
+    { json: true, temperature: 0.3 }
+  )
 
   const parsed = safeParse<Partial<AnalyzedText>>(raw, {})
 
@@ -230,84 +340,17 @@ Yêu cầu: keywords tối đa 8 mục; initial_questions đúng 3 câu.`
 }
 
 // ---------------------------------------------------------------------------
-// 1b) OCR một ảnh thành văn bản tiếng Việt (dùng khi học sinh đính kèm ảnh).
+// 1b) OCR một ảnh thành văn bản tiếng Việt.
 // ---------------------------------------------------------------------------
+// Lưu ý: model 'llama-3.1-8b-instant' KHÔNG hỗ trợ thị giác (vision), nên
+// không thể OCR ảnh. Giữ nguyên chữ ký hàm để tương thích UI; nếu được gọi sẽ
+// báo lỗi thân thiện cho người dùng.
 export async function ocrImage(imageBase64: string): Promise<string> {
-  try {
-    // --- Luồng chính: Gemini OCR (như hiện tại) ---
-    const data = imageBase64.includes(',')
-      ? imageBase64.split(',')[1]
-      : imageBase64
-    const mimeMatch = imageBase64.match(/^data:(.*?);base64,/)
-    const raw = await generateWithRetry({
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              text: 'Đóng vai OCR. Trích xuất CHÍNH XÁC toàn bộ chữ TIẾNG VIỆT trong ảnh (giữ dấu thanh, xuống dòng hợp lý). Chỉ trả về văn bản, không giải thích.',
-            },
-            {
-              inlineData: {
-                mimeType: mimeMatch?.[1] ?? 'image/png',
-                data,
-              },
-            },
-          ],
-        },
-      ],
-      config: { temperature: 0.1 },
-    })
-    return raw.trim()
-  } catch (err) {
-    // --- Fallback: Gemini lỗi/quá tải (429, 503, mất mạng…) → Tesseract.js ---
-    console.warn(
-      '[OCR] Gemini OCR lỗi — chuyển sang Tesseract.js (tiếng Việt) để không gián đoạn người dùng:',
-      err instanceof Error ? err.message : err
-    )
-    return ocrImageTesseract(imageBase64)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 1c) OCR NHIỀU ảnh cùng lúc → gộp thành một văn bản tiếng Việt.
-//     Gửi tất cả ảnh trong MỘT request để model hiểu đây là các trang/phần
-//     liên tiếp của cùng một ngữ liệu (ví dụ: đề Đọc hiểu gồm 2-3 ảnh).
-// ---------------------------------------------------------------------------
-export async function ocrImages(imageBase64List: string[]): Promise<string> {
-  const images = imageBase64List.filter(Boolean)
-  if (images.length === 0) return ''
-  if (images.length === 1) return ocrImage(images[0])
-
-  try {
-    // --- Luồng chính: Gemini OCR nhiều ảnh trong một request (như hiện tại) ---
-    const parts: Array<Record<string, unknown>> = [
-      {
-        text: `Đóng vai OCR. Dưới đây là ${images.length} ảnh thuộc CÙNG MỘT ngữ liệu, xếp theo đúng THỨ TỰ (Ảnh 1, Ảnh 2, …). Hãy trích xuất CHÍNH XÁC toàn bộ chữ TIẾNG VIỆT của tất cả các ảnh và GỘP LẠI thành một văn bản liền mạch theo đúng thứ tự ảnh (giữ dấu thanh, xuống dòng theo khổ thơ/đoạn, không lặp lại nội dung). Chỉ trả về văn bản, không giải thích, không ghi chú "Ảnh 1/Ảnh 2".`,
-      },
-    ]
-    images.forEach((img, i) => {
-      const data = img.includes(',') ? img.split(',')[1] : img
-      const mimeMatch = img.match(/^data:(.*?);base64,/)
-      parts.push({ text: `--- Ảnh ${i + 1} ---` })
-      parts.push({
-        inlineData: { mimeType: mimeMatch?.[1] ?? 'image/png', data },
-      })
-    })
-
-    const raw = await generateWithRetry({
-      contents: [{ role: 'user', parts }],
-      config: { temperature: 0.1 },
-    })
-    return raw.trim()
-  } catch (err) {
-    // --- Fallback: Gemini lỗi/quá tải (429, 503, mất mạng…) → Tesseract.js ---
-    console.warn(
-      '[OCR] Gemini OCR (nhiều ảnh) lỗi — chuyển sang Tesseract.js (tiếng Việt) để không gián đoạn người dùng:',
-      err instanceof Error ? err.message : err
-    )
-    return ocrImagesTesseract(images)
-  }
+  void imageBase64
+  throw new Error(
+    'Model Groq hiện tại (llama-3.1-8b-instant) không hỗ trợ OCR ảnh. ' +
+      'Vui lòng nhập văn bản trực tiếp.'
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -386,12 +429,13 @@ LƯỢT MỚI CỦA HỌC SINH (thái độ: ${attitudeVi}):
 
 Hãy để 4 Critic Agents phản hồi rồi Moderator tổng hợp, kèm chấm điểm & phát hiện ngụy biện theo schema JSON ở trên.`
 
-  const raw = await generateWithRetry({
-    contents: [
-      { role: 'user', parts: [{ text: systemPrompt }, { text: userPrompt }] },
+  const raw = await generateWithRetry(
+    [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
     ],
-    config: { responseMimeType: 'application/json', temperature: 0.8 },
-  })
+    { json: true, temperature: 0.8 }
+  )
 
   const parsed = safeParse<Partial<MultiAgentTurn>>(raw, {})
 

@@ -49,12 +49,25 @@ npm run dev
 
 ### Khởi tạo Database
 
-Mở **Supabase > SQL Editor** và chạy lần lượt:
+**Cách nhanh nhất (khuyến nghị):** mở **Supabase > SQL Editor > New query**, dán
+toàn bộ `supabase/setup.sql` rồi **Run**. File này gộp sẵn tất cả các bước dưới
+đây theo đúng thứ tự phụ thuộc và **idempotent** (chạy lại nhiều lần vẫn an toàn,
+không mất dữ liệu). Mỗi khi đổi Supabase project hoặc setup lại máy, chỉ cần chạy
+duy nhất file này.
+
+<details>
+<summary>Hoặc chạy từng file riêng lẻ (tương đương)</summary>
 
 1. `supabase/schema.sql` — 4 bảng dữ liệu (students, texts, debate_sessions, interaction_logs).
 2. `supabase/auth-schema.sql` — bảng `profiles` (có `username`, `role`, `status`), trigger tự tạo profile khi đăng ký, RLS.
 3. `supabase/analytics-schema.sql` — bảng `access_logs` (lượt đăng nhập) + RLS.
 4. `supabase/seed-admin.sql` — tạo sẵn tài khoản **admin** (xem bên dưới).
+
+> ⚠️ Nếu chạy riêng lẻ, phải đúng thứ tự: `analytics-schema.sql` phụ thuộc hàm
+> `current_user_role()` được tạo trong `auth-schema.sql`. Chạy sai thứ tự sẽ gây
+> lỗi **401 Unauthorized** khi ghi `access_logs` lúc đăng nhập.
+
+</details>
 
 ### Bật Realtime (cho tính năng Online)
 

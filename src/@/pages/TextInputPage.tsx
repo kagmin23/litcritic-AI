@@ -1,4 +1,5 @@
 import { PendingBanner } from '@/components/PendingBanner'
+import { RateLimitBadge } from '@/components/RateLimitBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -6,10 +7,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/lib/authContext'
-import { ACCEPT_UPLOAD, readUploadedFile } from '@/lib/fileUtils'
+import { ACCEPT_UPLOAD, readUploadedFiles } from '@/lib/fileUtils'
 import { fadeUpItem, staggerContainer } from '@/lib/motion'
 import { useNav } from '@/lib/navigation'
-import { analyzeUnseenText, ocrImage } from '@/services/geminiService'
+import { ocrImages } from '@/services/geminiService'
+import { analyzeUnseenText } from '@/services/groqService'
 import {
   createSession,
   createText,
@@ -18,7 +20,6 @@ import {
 import type { AnalyzedText } from '@/types'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  ArrowLeft,
   BookMarked,
   CheckCircle2,
   FileText,
@@ -27,13 +28,14 @@ import {
   Landmark,
   Loader2,
   Paperclip,
+  Plus,
   Save,
   ScanText,
   Sparkles,
   Swords,
   Trash2,
   Wand2,
-  X,
+  X
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -41,7 +43,10 @@ const DRAFT_KEY = 'visef_text_draft'
 
 interface Draft {
   rawText: string
-  imageBase64: string | null
+  /** Danh sách ảnh (data URL) theo đúng thứ tự người dùng tải lên. */
+  images: string[]
+  /** @deprecated giữ để tương thích bản nháp cũ (một ảnh). */
+  imageBase64?: string | null
   ocrText: string
   result: AnalyzedText | null
 }
@@ -56,17 +61,22 @@ export function TextInputPage() {
   const initialDraft: Draft = (() => {
     try {
       const raw = localStorage.getItem(DRAFT_KEY)
-      if (raw) return JSON.parse(raw) as Draft
+      if (raw) {
+        const d = JSON.parse(raw) as Draft
+        // Tương thích ngược: bản nháp cũ chỉ có imageBase64 (một ảnh).
+        if (!Array.isArray(d.images)) {
+          d.images = d.imageBase64 ? [d.imageBase64] : []
+        }
+        return d
+      }
     } catch {
       /* ignore */
     }
-    return { rawText: '', imageBase64: null, ocrText: '', result: null }
+    return { rawText: '', images: [], ocrText: '', result: null }
   })()
 
   const [rawText, setRawText] = useState(initialDraft.rawText)
-  const [imageBase64, setImageBase64] = useState<string | null>(
-    initialDraft.imageBase64
-  )
+  const [images, setImages] = useState<string[]>(initialDraft.images)
   const [ocrText, setOcrText] = useState(initialDraft.ocrText ?? '')
   const [ocrLoading, setOcrLoading] = useState(false)
   const [result, setResult] = useState<AnalyzedText | null>(initialDraft.result)
@@ -77,14 +87,15 @@ export function TextInputPage() {
 
   // Tự động lưu bản nháp (debounce) mỗi khi nội dung đổi.
   useEffect(() => {
-    const hasAny = rawText.trim() || imageBase64 || ocrText.trim() || result
+    const hasAny =
+      rawText.trim() || images.length > 0 || ocrText.trim() || result
     const t = setTimeout(() => {
       if (hasAny) {
         localStorage.setItem(
           DRAFT_KEY,
           JSON.stringify({
             rawText,
-            imageBase64,
+            images,
             ocrText,
             result,
           } satisfies Draft)
@@ -96,27 +107,31 @@ export function TextInputPage() {
       }
     }, 600)
     return () => clearTimeout(t)
-  }, [rawText, imageBase64, ocrText, result])
+  }, [rawText, images, ocrText, result])
 
   const hasDraft = Boolean(
-    rawText.trim() || imageBase64 || ocrText.trim() || result
+    rawText.trim() || images.length > 0 || ocrText.trim() || result
   )
 
   function clearDraft() {
     localStorage.removeItem(DRAFT_KEY)
     setRawText('')
-    setImageBase64(null)
+    setImages([])
     setOcrText('')
     setResult(null)
     setError(null)
   }
 
-  /** Chạy OCR một ảnh (data URL) để lấy văn bản xem trước. */
-  const runOcr = useCallback(async (dataUrl: string) => {
+  /** Chạy OCR toàn bộ ảnh (theo thứ tự) để lấy văn bản gộp xem trước. */
+  const runOcr = useCallback(async (dataUrls: string[]) => {
+    if (dataUrls.length === 0) {
+      setOcrText('')
+      return
+    }
     setOcrLoading(true)
     setError(null)
     try {
-      const text = await ocrImage(dataUrl)
+      const text = await ocrImages(dataUrls)
       setOcrText(text)
     } catch (e) {
       setError(
@@ -129,23 +144,39 @@ export function TextInputPage() {
     }
   }, [])
 
-  const handleFile = useCallback(
-    async (file: File | undefined) => {
-      if (!file) return
+  /** Nhận một hoặc nhiều tệp cùng lúc (ảnh + .txt). */
+  const handleFiles = useCallback(
+    async (fileList: FileList | null) => {
+      const files = fileList ? Array.from(fileList) : []
+      if (files.length === 0) return
       setError(null)
       try {
-        const res = await readUploadedFile(file)
-        if (res.kind === 'image') {
-          const dataUrl = res.imageBase64 ?? null
-          setImageBase64(dataUrl)
-          setOcrText('')
-          // Tự động OCR ngay để xem trước văn bản.
-          if (dataUrl) void runOcr(dataUrl)
-        } else if (res.kind === 'text') {
+        const results = await readUploadedFiles(files)
+        const newImages = results
+          .filter((r) => r.kind === 'image' && r.imageBase64)
+          .map((r) => r.imageBase64 as string)
+        const texts = results
+          .filter((r) => r.kind === 'text')
+          .map((r) => r.text ?? '')
+          .filter(Boolean)
+        const unsupported = results.some((r) => r.kind === 'unsupported')
+
+        if (texts.length > 0) {
           setRawText((prev) =>
-            prev ? `${prev}\n${res.text ?? ''}` : (res.text ?? '')
+            [prev, ...texts].filter(Boolean).join('\n')
           )
-        } else {
+        }
+
+        if (newImages.length > 0) {
+          // Gộp ảnh mới vào danh sách rồi OCR lại toàn bộ theo thứ tự.
+          setImages((prev) => {
+            const merged = [...prev, ...newImages]
+            void runOcr(merged)
+            return merged
+          })
+        }
+
+        if (unsupported && newImages.length === 0 && texts.length === 0) {
           setError(
             'Định dạng chưa hỗ trợ. Hãy dùng ảnh (jpg/png) hoặc tệp .txt — với PDF/sách giấy, chụp ảnh để AI OCR.'
           )
@@ -157,11 +188,23 @@ export function TextInputPage() {
     [runOcr]
   )
 
+  /** Gỡ một ảnh khỏi danh sách rồi OCR lại phần còn lại. */
+  const removeImage = useCallback(
+    (index: number) => {
+      setImages((prev) => {
+        const next = prev.filter((_, i) => i !== index)
+        void runOcr(next)
+        return next
+      })
+    },
+    [runOcr]
+  )
+
   async function handleAnalyze() {
     if (locked) return
     // Ưu tiên văn bản gõ tay; nếu không có thì dùng văn bản OCR (đã xem trước & sửa).
     const sourceText = rawText.trim() || ocrText.trim()
-    if (!sourceText && !imageBase64) {
+    if (!sourceText && images.length === 0) {
       setError('Vui lòng nhập văn bản hoặc tải ảnh trang sách.')
       return
     }
@@ -169,11 +212,15 @@ export function TextInputPage() {
     setError(null)
     setResult(null)
     try {
-      // Nếu đã OCR ra văn bản thì phân tích trực tiếp văn bản đó (không gửi lại ảnh,
-      // tiết kiệm 1 lượt gọi và dùng đúng bản người dùng đã chỉnh).
-      const analyzed = sourceText
-        ? await analyzeUnseenText(sourceText)
-        : await analyzeUnseenText('', imageBase64 ?? undefined)
+      // OCR dùng Gemini (model có thị giác), phần phân tích dùng Groq (văn bản).
+      // Nếu đã có văn bản (gõ tay hoặc OCR xem trước) thì phân tích trực tiếp;
+      // nếu chỉ có ảnh thì OCR gộp toàn bộ ảnh bằng Gemini trước rồi mới sang Groq.
+      let textToAnalyze = sourceText
+      if (!textToAnalyze && images.length > 0) {
+        textToAnalyze = await ocrImages(images)
+        if (textToAnalyze) setOcrText(textToAnalyze)
+      }
+      const analyzed = await analyzeUnseenText(textToAnalyze)
       setResult(analyzed)
       if (!rawText.trim()) setRawText(analyzed.content)
     } catch (e) {
@@ -234,14 +281,6 @@ export function TextInputPage() {
       {/* Header gọn: back + tiêu đề + trạng thái nháp trên một hàng */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => navigate({ name: 'dashboard' })}
-            aria-label="Về trang chủ"
-          >
-            <ArrowLeft />
-          </Button>
           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-sm">
             <Wand2 className="size-5" />
           </div>
@@ -255,6 +294,7 @@ export function TextInputPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <RateLimitBadge />
           <AnimatePresence>
             {draftSaved && (
               <motion.span
@@ -304,7 +344,7 @@ export function TextInputPage() {
                     onClick={() => fileRef.current?.click()}
                     className="flex items-center gap-1 font-medium text-primary hover:underline"
                   >
-                    <Paperclip className="size-3.5" /> Tải tệp .txt
+                    <Paperclip className="size-3.5" /> Tải ảnh / tệp .txt
                   </button>
                 </div>
               </TabsContent>
@@ -313,31 +353,56 @@ export function TextInputPage() {
                 <input
                   ref={fileRef}
                   type="file"
+                  multiple
                   accept={ACCEPT_UPLOAD}
                   className="hidden"
-                  onChange={(e) => void handleFile(e.target.files?.[0])}
+                  onChange={(e) => {
+                    void handleFiles(e.target.files)
+                    // reset để có thể chọn lại cùng tệp lần nữa
+                    e.target.value = ''
+                  }}
                 />
-                {imageBase64 ? (
+                {images.length > 0 ? (
                   <div className="space-y-3">
-                    <div className="relative">
-                      <img
-                        src={imageBase64}
-                        alt="Xem trước"
-                        className="max-h-56 w-full rounded-xl border object-contain"
-                      />
-                      <Button
-                        variant="secondary"
-                        size="icon-sm"
-                        className="absolute top-2 right-2"
-                        onClick={() => {
-                          setImageBase64(null)
-                          setOcrText('')
-                        }}
-                        aria-label="Gỡ ảnh"
+                    {/* Lưới ảnh có thể gỡ từng ảnh + ô thêm ảnh */}
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {images.map((img, i) => (
+                        <div
+                          key={i}
+                          className="group relative aspect-[4/5] overflow-hidden rounded-xl border bg-muted/30"
+                        >
+                          <img
+                            src={img}
+                            alt={`Ảnh ${i + 1}`}
+                            className="h-full w-full object-contain"
+                          />
+                          <span className="absolute top-1 left-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                            {i + 1}
+                          </span>
+                          <Button
+                            variant="secondary"
+                            size="icon-sm"
+                            className="absolute top-1 right-1 opacity-80 group-hover:opacity-100"
+                            onClick={() => removeImage(i)}
+                            aria-label={`Gỡ ảnh ${i + 1}`}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      {/* Ô thêm ảnh */}
+                      <button
+                        onClick={() => fileRef.current?.click()}
+                        className="flex aspect-[4/5] flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed text-muted-foreground transition-colors hover:border-primary/50 hover:bg-muted/40"
                       >
-                        <X className="size-4" />
-                      </Button>
+                        <Plus className="size-6" />
+                        <span className="text-xs font-medium">Thêm ảnh</span>
+                      </button>
                     </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {images.length} ảnh — AI sẽ OCR gộp theo đúng thứ tự. Kéo
+                      thả hoặc chọn nhiều ảnh một lúc đều được.
+                    </p>
 
                     {/* Văn bản OCR xem trước — tự động nhận dạng, có thể sửa */}
                     <div className="rounded-xl border bg-muted/30 p-3">
@@ -348,7 +413,7 @@ export function TextInputPage() {
                         <Button
                           variant="ghost"
                           size="xs"
-                          onClick={() => imageBase64 && void runOcr(imageBase64)}
+                          onClick={() => void runOcr(images)}
                           disabled={ocrLoading}
                           title="Nhận dạng lại"
                         >
@@ -365,7 +430,7 @@ export function TextInputPage() {
                         <div className="space-y-2 py-1">
                           <div className="flex items-center gap-2 text-xs text-primary">
                             <Loader2 className="size-3.5 animate-spin" /> Đang
-                            nhận dạng chữ trong ảnh…
+                            nhận dạng chữ trong {images.length} ảnh…
                           </div>
                           <Skeleton className="h-4 w-full" />
                           <Skeleton className="h-4 w-11/12" />
@@ -386,14 +451,6 @@ export function TextInputPage() {
                         </>
                       )}
                     </div>
-
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => fileRef.current?.click()}
-                    >
-                      <ScanText /> Chọn tệp khác
-                    </Button>
                   </div>
                 ) : (
                   <button
@@ -402,10 +459,11 @@ export function TextInputPage() {
                   >
                     <ImageUp className="size-8" />
                     <span className="text-sm font-medium">
-                      Nhấn để tải ảnh trang sách hoặc tệp .txt
+                      Nhấn để tải một hoặc nhiều ảnh trang sách / tệp .txt
                     </span>
                     <span className="text-xs">
-                      Ảnh sẽ được AI OCR trích xuất chữ tiếng Việt
+                      Chọn nhiều ảnh cùng lúc — AI OCR gộp theo thứ tự, trích
+                      xuất chữ tiếng Việt
                     </span>
                   </button>
                 )}

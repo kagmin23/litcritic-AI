@@ -1,4 +1,5 @@
 import { ArgumentGraph } from '@/components/ArgumentGraph'
+import { RateLimitBadge } from '@/components/RateLimitBadge'
 import { RoundtableChat } from '@/components/RoundtableChat'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,10 +31,8 @@ import { ACCEPT_UPLOAD, readUploadedFile } from '@/lib/fileUtils'
 import { useNav } from '@/lib/navigation'
 import { usePresence } from '@/lib/usePresence'
 import { useResizablePanels } from '@/lib/useResizablePanels'
-import {
-  generateMultiAgentResponse,
-  ocrImage
-} from '@/services/geminiService'
+import { ocrImage } from '@/services/geminiService'
+import { generateMultiAgentResponse } from '@/services/groqService'
 import {
   addLog,
   getSession,
@@ -419,6 +418,7 @@ export function DebateArenaPage({ sessionId }: DebateArenaPageProps) {
             </span>
             {onlineInSession} đang xem
           </Badge>
+          <RateLimitBadge />
           <Button onClick={handleFinish}>
             <Flag /> Kết thúc & Xem báo cáo
           </Button>

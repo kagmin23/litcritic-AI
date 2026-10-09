@@ -212,6 +212,44 @@
   background: color-mix(in oklch, var(--primary) 55%, transparent);
 }
 
+/* Chỉ phóng typography và container ở các route ngoài đấu trường. */
+.app-ui-scale {
+  font-size: 17px;
+}
+.app-ui-scale :where([class~="text-xs"]) {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem;
+}
+.app-ui-scale :where([class~="text-sm"]) {
+  font-size: 1rem !important;
+  line-height: 1.5rem;
+}
+.app-ui-scale :where([class~="text-base"]) {
+  font-size: 1.125rem !important;
+  line-height: 1.75rem;
+}
+.app-ui-scale :where([class~="text-lg"]) {
+  font-size: 1.25rem !important;
+  line-height: 1.75rem;
+}
+.app-ui-scale :where([class~="text-xl"]) {
+  font-size: 1.375rem !important;
+  line-height: 1.875rem;
+}
+.app-ui-scale :where([class~="text-2xl"]) {
+  font-size: 1.75rem !important;
+  line-height: 2.25rem;
+}
+.app-ui-scale :where([class~="text-[10px]"]) {
+  font-size: 0.75rem !important;
+}
+.app-ui-scale :where([class~="text-[11px]"]) {
+  font-size: 0.8125rem !important;
+}
+.app-ui-scale :where([class~="max-w-5xl"], [class~="max-w-6xl"]) {
+  max-width: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-aurora, .animate-float-slow { animation: none; }
 }
