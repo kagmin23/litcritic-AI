@@ -139,11 +139,11 @@ export function useIdleLogout({
       return
     }
 
-    // Khởi tạo từ mốc đã lưu (nếu có) để các tab/refresh dùng chung bộ đếm.
-    let last = Date.now()
+    // Bật idle tracking đồng nghĩa phiên vừa được khôi phục hoặc đăng nhập.
+    // Không dùng timestamp cũ vì nó có thể khiến phiên mới bị logout ngay.
+    const last = Date.now()
     try {
-      const stored = Number(localStorage.getItem(ACTIVITY_KEY))
-      if (stored && !Number.isNaN(stored)) last = stored
+      localStorage.setItem(ACTIVITY_KEY, String(last))
     } catch {
       /* bỏ qua */
     }
