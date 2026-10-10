@@ -14,33 +14,33 @@ import { useTwoPanels } from '@/lib/useTwoPanels'
 import { ocrImages } from '@/services/geminiService'
 import { analyzeUnseenText } from '@/services/groqService'
 import {
-  createText,
-  getOrCreateSession,
-  upsertStudent
+    createText,
+    getOrCreateSession,
+    upsertStudent
 } from '@/services/supabaseService'
 import type { AnalyzedText } from '@/types'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  BookMarked,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  FileText,
-  HelpCircle,
-  ImageUp,
-  Landmark,
-  Loader2,
-  PanelLeft,
-  PanelRight,
-  Plus,
-  RefreshCw,
-  Save,
-  ScanText,
-  Sparkles,
-  Swords,
-  Trash2,
-  Wand2,
-  X
+    BookMarked,
+    CheckCircle2,
+    ChevronLeft,
+    ChevronRight,
+    FileText,
+    HelpCircle,
+    ImageUp,
+    Landmark,
+    Loader2,
+    PanelLeft,
+    PanelRight,
+    Plus,
+    RefreshCw,
+    Save,
+    ScanText,
+    Sparkles,
+    Swords,
+    Trash2,
+    Wand2,
+    X
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -249,7 +249,9 @@ export function TextInputPage() {
 
   async function persist(): Promise<string | null> {
     if (!result) return null
+    if (!user) throw new Error('Bạn cần đăng nhập để lưu ngữ liệu.')
     const text = await createText({
+      owner_id: user.id,
       title: result.title,
       content: result.content,
       genre: result.genre,

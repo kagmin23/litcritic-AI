@@ -39,6 +39,7 @@ export interface Keyword {
 
 export interface TextItem {
   id: string
+  owner_id?: string | null
   title: string
   content: string
   genre: Genre | string

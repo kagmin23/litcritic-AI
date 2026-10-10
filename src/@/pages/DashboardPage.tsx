@@ -2,35 +2,51 @@ import { PendingBanner } from '@/components/PendingBanner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AGENTS } from '@/lib/agents'
 import { useAuth } from '@/lib/authContext'
-import { fadeUpItem, staggerContainer } from '@/lib/motion'
 import { useNav } from '@/lib/navigation'
 import { isSupabaseConfigured } from '@/lib/supabaseClient'
 import { isGeminiConfigured } from '@/services/geminiService'
 import { isGroqConfigured } from '@/services/groqService'
 import {
+    deleteText,
     getOrCreateSession,
     listTexts,
-    upsertStudent
+    upsertStudent,
 } from '@/services/supabaseService'
 import type { TextItem } from '@/types'
 import { motion } from 'framer-motion'
 import {
     AlertCircle,
+    ArrowRight,
     BookOpenText,
+    Check,
+    ChevronRight,
     FileText,
+    LayoutGrid,
     Library,
+    List,
+    ListFilter,
     Loader2,
     Plus,
     Search,
     Sparkles,
     Swords,
+    Trash2,
     TrendingUp,
+    X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 const GENRE_EMOJI: Record<string, string> = {
   Thơ: '🪶',
@@ -55,6 +71,15 @@ export function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [startingId, setStartingId] = useState<string | null>(null)
+  const [libraryTab, setLibraryTab] = useState<'all' | 'mine'>('all')
+  const [layout, setLayout] = useState<'cards' | 'list'>('cards')
+  const [selectedTopicFilters, setSelectedTopicFilters] = useState<Set<string>>(
+    () => new Set()
+  )
+  const [selectedTopic, setSelectedTopic] = useState<string | null>(null)
+  const [modalQuery, setModalQuery] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<TextItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -73,15 +98,71 @@ export function DashboardPage() {
     void refresh()
   }, [refresh])
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return texts
-    return texts.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.genre.toLowerCase().includes(q)
+  const currentTexts = useMemo(
+    () =>
+      libraryTab === 'mine'
+        ? texts.filter((text) => text.owner_id === user?.id)
+        : texts,
+    [texts, libraryTab, user?.id]
+  )
+
+  const topicGroups = useMemo(() => {
+    const counts = new Map<string, number>()
+    currentTexts.forEach((text) =>
+      counts.set(text.genre, (counts.get(text.genre) ?? 0) + 1)
     )
-  }, [texts, query])
+    const groups = new Map<string, TextItem[]>()
+    currentTexts.forEach((text) => {
+      const topic = text.genre === 'Khác' || (counts.get(text.genre) ?? 0) < 2
+        ? 'Khác'
+        : text.genre
+      groups.set(topic, [...(groups.get(topic) ?? []), text])
+    })
+    return Array.from(groups, ([title, items]) => ({ title, items })).sort(
+      (a, b) => (a.title === 'Khác' ? 1 : 0) - (b.title === 'Khác' ? 1 : 0)
+    )
+  }, [currentTexts])
+
+  const visibleGroups = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase('vi')
+    return topicGroups
+      .map((group) => ({
+        ...group,
+        visibleItems: q
+          ? group.items.filter((text) =>
+              `${text.title} ${text.genre} ${text.content}`
+                .toLocaleLowerCase('vi')
+                .includes(q)
+            )
+          : group.items,
+      }))
+      .filter(
+        (group) =>
+          selectedTopicFilters.size === 0 || selectedTopicFilters.has(group.title)
+      )
+      .filter((group) => group.visibleItems.length > 0)
+  }, [topicGroups, query, selectedTopicFilters])
+
+  function toggleTopicFilter(topic: string) {
+    setSelectedTopicFilters((selected) => {
+      const next = new Set(selected)
+      if (next.has(topic)) next.delete(topic)
+      else next.add(topic)
+      return next
+    })
+  }
+
+  const filteredCount = visibleGroups.reduce(
+    (total, group) => total + group.visibleItems.length,
+    0
+  )
+  const selectedGroup = topicGroups.find((group) => group.title === selectedTopic)
+  const modalItems = useMemo(() => {
+    const q = modalQuery.trim().toLocaleLowerCase('vi')
+    return (selectedGroup?.items ?? []).filter((text) =>
+      !q || `${text.title} ${text.genre} ${text.content}`.toLocaleLowerCase('vi').includes(q)
+    )
+  }, [selectedGroup, modalQuery])
 
   const genreCount = useMemo(
     () => new Set(texts.map((t) => t.genre)).size,
@@ -106,11 +187,26 @@ export function DashboardPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!deleteTarget || !user || deleteTarget.owner_id !== user.id) return
+    setDeleting(true)
+    setError(null)
+    try {
+      await deleteText(deleteTarget.id, user.id)
+      setTexts((items) => items.filter((item) => item.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không xóa được ngữ liệu.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const firstName =
     user?.profile.full_name?.split(' ').slice(-1)[0] || 'bạn'
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-5 lg:px-8">
+    <div className="mx-auto w-full px-4 py-5 lg:px-7">
       <PendingBanner />
 
       {/* Banner chào mừng — gọn, thống kê nằm ngang cùng hàng để bớt chiều cao */}
@@ -147,7 +243,7 @@ export function DashboardPage() {
               onClick={() => navigate({ name: 'textInput' })}
               disabled={locked}
               title={locked ? 'Chờ phê duyệt để mở khóa' : undefined}
-              className="flex min-w-[7rem] flex-col items-center justify-center gap-1 rounded-xl bg-white/90 px-3 text-foreground shadow-md transition-colors hover:bg-white disabled:opacity-50"
+              className="flex min-w-28 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl bg-white/90 px-3 text-foreground shadow-md transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="size-4" />
               <span className="text-xs font-semibold leading-tight">
@@ -183,22 +279,79 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Thanh tiêu đề + tìm kiếm */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="font-heading flex items-center gap-2 text-lg font-semibold">
-          <BookOpenText className="size-5 text-primary" /> Thư viện ngữ liệu
-          <Badge variant="secondary" className="ml-1">
-            {filtered.length}
-          </Badge>
-        </h2>
-        <div className="relative w-full sm:w-64">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tìm kiếm.."
-            className="h-9 pl-9"
-          />
+      <div className="sticky top-0 z-20 -mx-4 mb-5 flex flex-col gap-4 border-b bg-background/95 px-4 py-3 shadow-sm backdrop-blur supports-backdrop-filter:bg-background/85 lg:-mx-7 lg:px-7">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-4">
+            <h2 className="font-heading flex items-center gap-2 text-lg font-semibold">
+              <BookOpenText className="size-5 text-primary" /> Thư viện ngữ liệu
+              <Badge variant="secondary">{filteredCount}</Badge>
+            </h2>
+            <Tabs value={libraryTab} onValueChange={(value) => setLibraryTab(value as 'all' | 'mine')}>
+              <TabsList>
+                <TabsTrigger value="all">Tất cả</TabsTrigger>
+                <TabsTrigger value="mine">Của bạn</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative min-w-0 flex-1 sm:w-[24rem] sm:flex-none lg:w-120">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Tìm kiếm ngữ liệu..."
+                className="h-9 pl-9 pr-9"
+              />
+              {query && (
+                <Button variant="ghost" size="icon-sm" aria-label="Xóa tìm kiếm" className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => setQuery('')}>
+                  <X />
+                </Button>
+              )}
+            </div>
+            <div className="flex shrink-0 rounded-lg border bg-background p-0.5">
+              <Button variant={layout === 'cards' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Hiển thị dạng thẻ" title="Dạng thẻ" onClick={() => setLayout('cards')}>
+                <LayoutGrid />
+              </Button>
+              <Button variant={layout === 'list' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Hiển thị dạng danh sách" title="Dạng danh sách" onClick={() => setLayout('list')}>
+                <List />
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex shrink-0 items-center gap-1.5 text-xs">
+            <ListFilter className="size-3.5 text-primary" />
+            <span className="font-semibold">Lọc theo chủ đề</span>
+            <span className="text-muted-foreground">· chọn một hoặc nhiều</span>
+          </div>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5">
+          <Button
+            variant={selectedTopicFilters.size === 0 ? 'secondary' : 'outline'}
+            size="sm"
+            aria-pressed={selectedTopicFilters.size === 0}
+            onClick={() => setSelectedTopicFilters(new Set())}
+            className="h-7 shrink-0"
+          >
+            {selectedTopicFilters.size === 0 && <Check />}
+            Tất cả
+          </Button>
+          {topicGroups.map((group) => {
+            const active = selectedTopicFilters.has(group.title)
+            return (
+              <Button
+                key={group.title}
+                variant={active ? 'secondary' : 'outline'}
+                size="sm"
+                aria-pressed={active}
+                onClick={() => toggleTopicFilter(group.title)}
+                className="h-7 shrink-0"
+              >
+                {active && <Check />}
+                {GENRE_EMOJI[group.title] ?? '📄'} {group.title}
+              </Button>
+            )
+          })}
+          </div>
         </div>
       </div>
 
@@ -222,29 +375,209 @@ export function DashboardPage() {
             </Card>
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : filteredCount === 0 ? (
         <EmptyState
-          hasTexts={texts.length > 0}
+          hasTexts={currentTexts.length > 0}
+          isMine={libraryTab === 'mine'}
           onCreate={() => navigate({ name: 'textInput' })}
         />
       ) : (
-        <motion.div
-          variants={staggerContainer}
-          initial="hidden"
-          animate="show"
-          className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4"
+        <div className="space-y-7">
+          {visibleGroups.map((group) => {
+            const isOwnedTab = libraryTab === 'mine'
+            const previewLimit = isOwnedTab ? 5 : 7
+            const rowItems = group.visibleItems.slice(0, previewLimit)
+            const showViewAll = !isOwnedTab || group.visibleItems.length > previewLimit
+            return (
+              <section key={group.title}>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 className="font-heading flex items-center gap-2 text-base font-semibold">
+                    <span>{GENRE_EMOJI[group.title] ?? '📄'}</span>
+                    {group.title}
+                    <Badge variant="secondary">{group.visibleItems.length}</Badge>
+                  </h3>
+                </div>
+                <TopicShelf
+                  layout={layout}
+                  showViewAll={showViewAll}
+                  onViewAll={() => { setSelectedTopic(group.title); setModalQuery(query) }}
+                >
+                  {rowItems.map((text) => (
+                    <TextCard
+                      key={text.id}
+                      text={text}
+                      layout={layout}
+                      starting={startingId === text.id}
+                      locked={locked}
+                      canDelete={libraryTab === 'mine' && text.owner_id === user?.id}
+                      horizontal={layout === 'cards'}
+                      onStart={() => void handleStart(text)}
+                      onDelete={() => setDeleteTarget(text)}
+                    />
+                  ))}
+                </TopicShelf>
+              </section>
+            )
+          })}
+        </div>
+      )}
+
+      <Dialog open={!!selectedTopic} onOpenChange={(open) => !open && setSelectedTopic(null)}>
+        <DialogContent
+          className="grid grid-rows-[auto_1fr] gap-0 overflow-hidden p-0"
+          style={{
+            width: '100vw',
+            maxWidth: '100vw',
+            height: '100dvh',
+            maxHeight: '100dvh',
+            borderRadius: 0,
+          }}
         >
-          {filtered.map((t) => (
-            <motion.div key={t.id} variants={fadeUpItem}>
+          <DialogHeader className="border-b px-6 py-4 pr-14 md:px-8">
+            <DialogTitle className="text-lg">{selectedTopic} <span className="font-normal text-muted-foreground">({modalItems.length})</span></DialogTitle>
+            <DialogDescription className="sr-only">Toàn bộ ngữ liệu thuộc chủ đề {selectedTopic}.</DialogDescription>
+            <div className="relative mt-2 max-w-4xl">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={modalQuery} onChange={(e) => setModalQuery(e.target.value)} placeholder="Tìm trong chủ đề..." className="h-10 pl-9 pr-9" />
+              {modalQuery && <Button variant="ghost" size="icon-sm" aria-label="Xóa tìm kiếm" className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => setModalQuery('')}><X /></Button>}
+            </div>
+          </DialogHeader>
+          <div className={layout === 'cards' ? 'grid auto-rows-max grid-cols-1 gap-4 overflow-y-auto p-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 md:p-8' : 'flex flex-col gap-2 overflow-y-auto p-6 md:p-8'}>
+            {modalItems.map((text) => (
               <TextCard
-                text={t}
-                starting={startingId === t.id}
+                key={text.id}
+                text={text}
+                layout={layout}
+                starting={startingId === text.id}
                 locked={locked}
-                onStart={() => handleStart(t)}
+                canDelete={libraryTab === 'mine' && text.owner_id === user?.id}
+                onStart={() => void handleStart(text)}
+                onDelete={() => setDeleteTarget(text)}
+                horizontal={false}
               />
-            </motion.div>
-          ))}
-        </motion.div>
+            ))}
+            {modalItems.length === 0 && <p className="col-span-full py-10 text-center text-sm text-muted-foreground">Không tìm thấy ngữ liệu phù hợp.</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Xóa ngữ liệu?</DialogTitle>
+            <DialogDescription>Bài “{deleteTarget?.title}” sẽ bị xóa cùng dữ liệu tranh luận liên quan. Thao tác này không thể hoàn tác.</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>Hủy</Button>
+            <Button variant="destructive" disabled={deleting} onClick={() => void handleDelete()}>
+              {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+              Xóa bài
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function TopicShelf({
+  children,
+  layout,
+  showViewAll,
+  onViewAll,
+}: {
+  children: ReactNode
+  layout: 'cards' | 'list'
+  showViewAll: boolean
+  onViewAll: () => void
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+
+  useEffect(() => {
+    const element = scrollRef.current
+    if (!element) return
+
+    const updateScrollState = () => {
+      const maxScroll = element.scrollWidth - element.clientWidth
+      setCanScrollRight(maxScroll > 2 && element.scrollLeft < maxScroll - 2)
+    }
+    const observer = new ResizeObserver(updateScrollState)
+    observer.observe(element)
+    element.addEventListener('scroll', updateScrollState, { passive: true })
+    updateScrollState()
+
+    return () => {
+      observer.disconnect()
+      element.removeEventListener('scroll', updateScrollState)
+    }
+  }, [children])
+
+  function scrollForward() {
+    const element = scrollRef.current
+    if (!element) return
+    element.scrollBy({ left: element.clientWidth * 0.8, behavior: 'smooth' })
+  }
+
+  const viewAllButton = !showViewAll ? null : layout === 'cards' ? (
+    <button
+      type="button"
+      onClick={onViewAll}
+      className="group relative flex h-70 shrink-0 snap-start cursor-pointer flex-col justify-between overflow-hidden rounded-r-xl p-5 text-left text-foreground transition-colors hover:text-primary"
+      style={{
+        flex: '0 0 calc((100% - 48px) / 5)',
+        minWidth: 'min(100%, 200px)',
+      }}
+    >
+      <span className="pointer-events-none absolute inset-0 bg-[linear-gradient(110deg,transparent_8%,rgba(6,182,212,0.08)_38%,rgba(79,70,229,0.16)_72%,rgba(192,38,211,0.24)_100%)] opacity-70 transition-opacity group-hover:opacity-100" />
+      <span className="relative mt-auto flex items-center gap-2 border-b border-current/25 pb-2 font-heading text-lg font-normal">
+        Xem tất cả
+        <ArrowRight className="transition-transform group-hover:translate-x-1" />
+      </span>
+    </button>
+  ) : (
+    <button
+      type="button"
+      onClick={onViewAll}
+      className="group relative flex h-14 w-full cursor-pointer items-center justify-between overflow-hidden px-4 text-left text-foreground hover:text-primary"
+    >
+      <span className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(6,182,212,0.08),rgba(79,70,229,0.14),rgba(192,38,211,0.2))] opacity-70 transition-opacity group-hover:opacity-100" />
+      <span className="relative font-medium">Xem tất cả chủ đề</span>
+      <ArrowRight className="relative transition-transform group-hover:translate-x-1" />
+    </button>
+  )
+
+  if (layout === 'list') {
+    return (
+      <div className="flex flex-col gap-2">
+        {children}
+        {viewAllButton && <div className="flex justify-end">{viewAllButton}</div>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative">
+      <div
+        ref={scrollRef}
+        className="flex snap-x gap-3 overflow-x-auto px-1 pt-2 pb-3 scrollbar-thin"
+      >
+        {children}
+        {viewAllButton}
+      </div>
+      {canScrollRight && (
+        <div className="pointer-events-none absolute top-2 right-0 bottom-3 z-10 flex w-20 items-center justify-end overflow-hidden rounded-xl bg-[linear-gradient(90deg,transparent,rgba(30,41,59,0.16)_45%,rgba(30,41,59,0.6))] pr-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Cuộn sang phải"
+            title="Cuộn sang phải"
+            className="pointer-events-auto rounded-full border border-white/35 bg-slate-900/75 text-white shadow-lg backdrop-blur hover:bg-slate-800"
+            onClick={scrollForward}
+          >
+            <ChevronRight />
+          </Button>
+        </div>
       )}
     </div>
   )
@@ -260,7 +593,7 @@ function HeroStat({
   label: string
 }) {
   return (
-    <div className="flex min-w-[4.5rem] flex-col items-center justify-center rounded-xl bg-white/10 px-3 py-2 ring-1 ring-white/20 backdrop-blur">
+    <div className="flex min-w-18 flex-col items-center justify-center rounded-xl bg-white/10 px-3 py-2 ring-1 ring-white/20 backdrop-blur">
       <Icon className="mb-0.5 size-4 text-white/80" />
       <div className="font-heading text-lg font-bold leading-none">{value}</div>
       <div className="text-[10px] text-white/75">{label}</div>
@@ -270,20 +603,69 @@ function HeroStat({
 
 function TextCard({
   text,
+  layout,
   starting,
   locked,
+  canDelete,
+  horizontal = true,
   onStart,
+  onDelete,
 }: {
   text: TextItem
+  layout: 'cards' | 'list'
   starting: boolean
   locked: boolean
+  canDelete: boolean
+  horizontal?: boolean
   onStart: () => void
+  onDelete: () => void
 }) {
+  const actionButtons = (
+    <div className="flex shrink-0 gap-2">
+      <Button
+        className={layout === 'cards' ? 'flex-1' : ''}
+        onClick={onStart}
+        disabled={starting || locked}
+        title={locked ? 'Chờ phê duyệt để mở khóa' : undefined}
+      >
+        {starting ? <Loader2 className="animate-spin" /> : <Swords />}
+        {starting ? 'Đang mở…' : locked ? 'Đang chờ duyệt' : 'Vào tranh luận'}
+      </Button>
+      {canDelete && (
+        <Button variant="destructive" size="icon" aria-label={`Xóa ${text.title}`} title="Xóa bài của bạn" onClick={onDelete}>
+          <Trash2 />
+        </Button>
+      )}
+    </div>
+  )
+
+  if (layout === 'list') {
+    return (
+      <div
+        className={`flex ${horizontal ? 'shrink-0 snap-start' : 'w-full'} items-center gap-3 rounded-lg border bg-card p-3`}
+        style={horizontal ? { flex: '0 0 calc((100% - 48px) / 5)', minWidth: 'min(100%, 300px)' } : undefined}
+      >
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-md bg-brand-gradient text-2xl" aria-hidden="true">
+          {GENRE_EMOJI[text.genre] ?? '📄'}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <Badge variant="secondary" className="max-w-28 truncate">{text.genre}</Badge>
+          </div>
+          <h3 className="truncate font-heading text-sm font-semibold">{text.title}</h3>
+          <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{text.content}</p>
+        </div>
+        {actionButtons}
+      </div>
+    )
+  }
+
   return (
     <motion.div
       whileHover={{ y: -4 }}
       transition={{ duration: 0.2 }}
-      className="group flex h-full flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 transition-shadow hover:ring-brand hover:shadow-lg"
+      className={`group flex h-70 ${horizontal ? 'snap-start' : 'w-full'} flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 transition-shadow hover:ring-brand hover:shadow-lg`}
+      style={horizontal ? { flex: '0 0 calc((100% - 48px) / 5)', minWidth: 'min(100%, 200px)' } : undefined}
     >
       {/* Dải màu theo thể loại */}
       <div className="relative h-20 overflow-hidden bg-brand-gradient">
@@ -315,15 +697,7 @@ function TextCard({
             </Badge>
           )}
         </div>
-        <Button
-          className="mt-2 w-full"
-          onClick={onStart}
-          disabled={starting || locked}
-          title={locked ? 'Chờ phê duyệt để mở khóa' : undefined}
-        >
-          {starting ? <Loader2 className="animate-spin" /> : <Swords />}
-          {starting ? 'Đang mở…' : locked ? 'Đang chờ duyệt' : 'Vào tranh luận'}
-        </Button>
+        {actionButtons}
       </div>
     </motion.div>
   )
@@ -331,9 +705,11 @@ function TextCard({
 
 function EmptyState({
   hasTexts,
+  isMine,
   onCreate,
 }: {
   hasTexts: boolean
+  isMine: boolean
   onCreate: () => void
 }) {
   return (
@@ -342,7 +718,7 @@ function EmptyState({
       animate={{ opacity: 1, scale: 1 }}
       className="relative overflow-hidden rounded-2xl border border-dashed bg-card/60 p-12 text-center"
     >
-      <div className="bg-dot-grid pointer-events-none absolute inset-0 text-foreground/[0.03]" />
+      <div className="bg-dot-grid pointer-events-none absolute inset-0 text-foreground/3" />
       <div className="relative mx-auto flex max-w-sm flex-col items-center gap-3">
         <div className="flex -space-x-2">
           {Object.values(AGENTS)
@@ -360,7 +736,9 @@ function EmptyState({
         <p className="text-sm text-muted-foreground">
           {hasTexts
             ? 'Không tìm thấy ngữ liệu phù hợp. Thử từ khóa khác.'
-            : 'Chưa có ngữ liệu nào. Hãy tạo bài đọc đầu tiên để các nhà phê bình bắt đầu tranh luận.'}
+            : isMine
+              ? 'Bạn chưa tạo ngữ liệu nào. Hãy tạo bài đọc đầu tiên để bắt đầu.'
+              : 'Chưa có ngữ liệu nào. Hãy tạo bài đọc đầu tiên để các nhà phê bình bắt đầu tranh luận.'}
         </p>
         {!hasTexts && (
           <Button onClick={onCreate}>

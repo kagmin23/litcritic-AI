@@ -105,7 +105,7 @@ export async function listStudents(): Promise<Student[]> {
 // TEXTS
 // --------------------------------------------------------------------------
 export async function createText(
-  input: Omit<TextItem, 'id' | 'created_at'>
+  input: Omit<TextItem, 'id' | 'created_at' | 'owner_id'> & { owner_id: string }
 ): Promise<TextItem> {
   const record: TextItem = {
     ...input,
@@ -122,6 +122,7 @@ export async function createText(
 
   // Payload cơ bản theo schema mới (dùng cột `content`).
   const base = {
+    owner_id: input.owner_id ?? null,
     title: input.title,
     content: input.content,
     genre: input.genre,
@@ -187,6 +188,7 @@ export function normalizeText(raw: unknown): TextItem {
 
   return {
     id: String(t.id ?? ''),
+    owner_id: typeof t.owner_id === 'string' ? t.owner_id : null,
     title: String(t.title ?? ''),
     content: String(t.content ?? ''),
     genre: String(t.genre ?? 'Khác'),
@@ -220,6 +222,30 @@ export async function getText(id: string): Promise<TextItem | null> {
     .single()
   if (error) return null
   return normalizeText(data)
+}
+
+export async function deleteText(id: string, ownerId: string): Promise<void> {
+  if (!ownerId) throw new Error('Không xác định được chủ sở hữu ngữ liệu.')
+
+  if (!isSupabaseConfigured) {
+    const texts = lsRead<TextItem>(LS_KEYS.texts)
+    const text = texts.find((item) => item.id === id)
+    if (!text || text.owner_id !== ownerId) {
+      throw new Error('Bạn chỉ có thể xóa ngữ liệu do mình tạo.')
+    }
+    lsWrite(LS_KEYS.texts, texts.filter((item) => item.id !== id))
+    return
+  }
+
+  const { data, error } = await supabase
+    .from('texts')
+    .delete()
+    .eq('id', id)
+    .eq('owner_id', ownerId)
+    .select('id')
+    .maybeSingle()
+  if (error) throw error
+  if (!data) throw new Error('Bạn chỉ có thể xóa ngữ liệu do mình tạo.')
 }
 
 // --------------------------------------------------------------------------

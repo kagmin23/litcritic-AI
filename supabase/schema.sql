@@ -21,6 +21,7 @@ create table if not exists public.students (
 -- ---------------------------------------------------------------------------
 create table if not exists public.texts (
   id                uuid primary key default gen_random_uuid(),
+  owner_id          uuid references auth.users(id) on delete set null,
   title             text not null,
   content           text not null,
   genre             text,
@@ -29,6 +30,8 @@ create table if not exists public.texts (
   initial_questions jsonb default '[]'::jsonb,   -- string[]
   created_at        timestamptz not null default now()
 );
+
+alter table public.texts add column if not exists owner_id uuid references auth.users(id) on delete set null;
 
 -- ---------------------------------------------------------------------------
 -- 3) debate_sessions
@@ -78,9 +81,13 @@ begin
     create policy anon_all_students on public.students for all using (true) with check (true);
   end if;
   -- texts
-  if not exists (select 1 from pg_policies where tablename='texts' and policyname='anon_all_texts') then
-    create policy anon_all_texts on public.texts for all using (true) with check (true);
-  end if;
+  drop policy if exists anon_all_texts on public.texts;
+  drop policy if exists texts_public_read on public.texts;
+  drop policy if exists texts_owner_insert on public.texts;
+  drop policy if exists texts_owner_delete on public.texts;
+  create policy texts_public_read on public.texts for select to anon, authenticated using (true);
+  create policy texts_owner_insert on public.texts for insert to authenticated with check (owner_id = auth.uid());
+  create policy texts_owner_delete on public.texts for delete to authenticated using (owner_id = auth.uid());
   -- debate_sessions
   if not exists (select 1 from pg_policies where tablename='debate_sessions' and policyname='anon_all_sessions') then
     create policy anon_all_sessions on public.debate_sessions for all using (true) with check (true);
