@@ -3,10 +3,10 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-    Tooltip,
-    TooltipContent,
-    TooltipProvider,
-    TooltipTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ROLE_LABEL, useAuth } from '@/lib/authContext'
 import { useNav, type Route } from '@/lib/navigation'
@@ -14,17 +14,17 @@ import type { UserRole } from '@/types'
 import { cn } from 'cn'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-    Activity,
-    Clock,
-    FilePlus2,
-    GraduationCap,
-    LayoutDashboard,
-    LogOut,
-    Menu,
-    PanelLeftClose,
-    PanelLeftOpen,
-    UsersRound,
-    X
+  Activity,
+  Clock,
+  FilePlus2,
+  GraduationCap,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  UsersRound,
+  X
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -133,7 +133,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               'flex items-center gap-2.5 rounded-xl p-2 text-left transition-colors hover:bg-sidebar-accent',
               isCollapsed && 'p-1.5'
             )}
-            title="ViSEF LitCritic"
+            title="Multi LitCritic AI"
           >
             <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-sm">
               <GraduationCap className="size-5" />
@@ -141,7 +141,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {!isCollapsed && (
               <div className="leading-tight">
                 <div className="font-heading text-sm font-semibold">
-                  ViSEF LitCritic
+                  Multi LitCritic AI
                 </div>
                 <div className="text-[11px] text-muted-foreground">
                   Tư duy phản biện
@@ -345,7 +345,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <GraduationCap className="size-4" />
             </div>
             <span className="font-heading text-sm font-semibold">
-              ViSEF LitCritic
+              Multi LitCritic AI
             </span>
           </div>
         </header>

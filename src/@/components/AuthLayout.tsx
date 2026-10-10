@@ -107,7 +107,7 @@ export function AuthLayout({
             <div className="flex size-9 items-center justify-center rounded-xl bg-brand-gradient text-white">
               <GraduationCap className="size-5" />
             </div>
-            <span className="font-heading font-semibold">ViSEF LitCritic</span>
+            <span className="font-heading font-semibold">Multi LitCritic AI</span>
           </div>
 
           <h2 className="font-heading text-2xl font-bold tracking-tight">

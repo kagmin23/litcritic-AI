@@ -3,15 +3,21 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { AGENTS } from '@/lib/agents'
 import { useAuth } from '@/lib/authContext'
 import { useNav } from '@/lib/navigation'
@@ -19,32 +25,34 @@ import { isSupabaseConfigured } from '@/lib/supabaseClient'
 import { isGeminiConfigured } from '@/services/geminiService'
 import { isGroqConfigured } from '@/services/groqService'
 import {
-    deleteText,
-    getOrCreateSession,
-    listTexts,
-    upsertStudent,
+  deleteText,
+  getOrCreateSession,
+  listTexts,
+  upsertStudent,
 } from '@/services/supabaseService'
 import type { TextItem } from '@/types'
 import { motion } from 'framer-motion'
 import {
-    AlertCircle,
-    ArrowRight,
-    BookOpenText,
-    Check,
-    ChevronRight,
-    FileText,
-    LayoutGrid,
-    Library,
-    List,
-    ListFilter,
-    Loader2,
-    Plus,
-    Search,
-    Sparkles,
-    Swords,
-    Trash2,
-    TrendingUp,
-    X,
+  AlertCircle,
+  ArrowRight,
+  BookOpenText,
+  Check,
+  ChevronRight,
+  Eye,
+  FileText,
+  LayoutGrid,
+  Library,
+  List,
+  ListFilter,
+  Loader2,
+  Plus,
+  Search,
+  Sparkles,
+  Swords,
+  Trash2,
+  TrendingUp,
+  UserRound,
+  X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
@@ -78,6 +86,7 @@ export function DashboardPage() {
   )
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null)
   const [modalQuery, setModalQuery] = useState('')
+  const [detailTarget, setDetailTarget] = useState<TextItem | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<TextItem | null>(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -130,9 +139,7 @@ export function DashboardPage() {
         ...group,
         visibleItems: q
           ? group.items.filter((text) =>
-              `${text.title} ${text.genre} ${text.content}`
-                .toLocaleLowerCase('vi')
-                .includes(q)
+              text.title.toLocaleLowerCase('vi').includes(q)
             )
           : group.items,
       }))
@@ -160,7 +167,7 @@ export function DashboardPage() {
   const modalItems = useMemo(() => {
     const q = modalQuery.trim().toLocaleLowerCase('vi')
     return (selectedGroup?.items ?? []).filter((text) =>
-      !q || `${text.title} ${text.genre} ${text.content}`.toLocaleLowerCase('vi').includes(q)
+      !q || text.title.toLocaleLowerCase('vi').includes(q)
     )
   }, [selectedGroup, modalQuery])
 
@@ -299,7 +306,7 @@ export function DashboardPage() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Tìm kiếm ngữ liệu..."
+                placeholder="Tìm tên bài học..."
                 className="h-9 pl-9 pr-9"
               />
               {query && (
@@ -409,9 +416,11 @@ export function DashboardPage() {
                       layout={layout}
                       starting={startingId === text.id}
                       locked={locked}
-                      canDelete={libraryTab === 'mine' && text.owner_id === user?.id}
+                      canDelete={text.owner_id === user?.id}
+                      isOwned={text.owner_id === user?.id}
                       horizontal={layout === 'cards'}
                       onStart={() => void handleStart(text)}
+                      onViewDetail={() => setDetailTarget(text)}
                       onDelete={() => setDeleteTarget(text)}
                     />
                   ))}
@@ -421,6 +430,18 @@ export function DashboardPage() {
           })}
         </div>
       )}
+
+      <footer className="mt-12 border-t border-border/70 py-5">
+        <div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <BookOpenText className="size-4 text-primary" />
+            <span className="font-heading font-semibold text-foreground">Multi LitCritic AI</span>
+            <span aria-hidden="true">·</span>
+            <span>Rèn luyện tư duy phản biện qua văn học</span>
+          </div>
+          <span>© {new Date().getFullYear()} TƯ DUY PHẢN BIỆN & TIẾP NHẬN VĂN HỌC ĐA CHIỀU</span>
+        </div>
+      </footer>
 
       <Dialog open={!!selectedTopic} onOpenChange={(open) => !open && setSelectedTopic(null)}>
         <DialogContent
@@ -438,7 +459,7 @@ export function DashboardPage() {
             <DialogDescription className="sr-only">Toàn bộ ngữ liệu thuộc chủ đề {selectedTopic}.</DialogDescription>
             <div className="relative mt-2 max-w-4xl">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={modalQuery} onChange={(e) => setModalQuery(e.target.value)} placeholder="Tìm trong chủ đề..." className="h-10 pl-9 pr-9" />
+              <Input value={modalQuery} onChange={(e) => setModalQuery(e.target.value)} placeholder="Tìm tên bài học..." className="h-10 pl-9 pr-9" />
               {modalQuery && <Button variant="ghost" size="icon-sm" aria-label="Xóa tìm kiếm" className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => setModalQuery('')}><X /></Button>}
             </div>
           </DialogHeader>
@@ -450,13 +471,65 @@ export function DashboardPage() {
                 layout={layout}
                 starting={startingId === text.id}
                 locked={locked}
-                canDelete={libraryTab === 'mine' && text.owner_id === user?.id}
+                canDelete={text.owner_id === user?.id}
+                isOwned={text.owner_id === user?.id}
                 onStart={() => void handleStart(text)}
+                onViewDetail={() => setDetailTarget(text)}
                 onDelete={() => setDeleteTarget(text)}
                 horizontal={false}
               />
             ))}
             {modalItems.length === 0 && <p className="col-span-full py-10 text-center text-sm text-muted-foreground">Không tìm thấy ngữ liệu phù hợp.</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!detailTarget} onOpenChange={(open) => !open && setDetailTarget(null)}>
+        <DialogContent
+          className="grid max-h-[90dvh] grid-rows-[auto_1fr] gap-0 overflow-hidden p-0"
+          style={{ width: 'min(92vw, 900px)', maxWidth: '92vw', maxHeight: '90dvh' }}
+        >
+          <DialogHeader className="border-b px-6 py-5 pr-14">
+            <DialogTitle className="text-xl leading-snug">{detailTarget?.title}</DialogTitle>
+            <DialogDescription className="flex items-center gap-2">
+              <Badge variant="secondary">{detailTarget?.genre}</Badge>
+              {detailTarget?.owner_id === user?.id && (
+                <Badge className="gap-1 border-transparent bg-linear-to-br from-sky-500 via-cyan-500 to-teal-500 text-white">
+                  <UserRound className="size-3" /> Bài của bạn
+                </Badge>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 overflow-y-auto px-6 py-5">
+            <DetailSection title="Nội dung">
+              <p className="whitespace-pre-wrap text-sm leading-7 text-foreground/90">{detailTarget?.content}</p>
+            </DetailSection>
+            {detailTarget?.background && (
+              <DetailSection title="Bối cảnh">
+                <p className="whitespace-pre-wrap text-sm leading-7 text-muted-foreground">{detailTarget.background}</p>
+              </DetailSection>
+            )}
+            {!!detailTarget?.keywords.length && (
+              <DetailSection title="Từ khóa">
+                <ul className="space-y-2">
+                  {detailTarget.keywords.map((keyword) => (
+                    <li key={keyword.term} className="text-sm leading-6">
+                      <span className="font-medium">{keyword.term}</span>
+                      {keyword.meaning && <span className="text-muted-foreground">: {keyword.meaning}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </DetailSection>
+            )}
+            {!!detailTarget?.initial_questions.length && (
+              <DetailSection title="Câu hỏi khởi đầu">
+                <ol className="list-decimal space-y-2 pl-5 text-sm leading-6 text-muted-foreground">
+                  {detailTarget.initial_questions.map((question, index) => (
+                    <li key={`${index}-${question}`}>{question}</li>
+                  ))}
+                </ol>
+              </DetailSection>
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -523,7 +596,7 @@ function TopicShelf({
     <button
       type="button"
       onClick={onViewAll}
-      className="group relative flex h-70 shrink-0 snap-start cursor-pointer flex-col justify-between overflow-hidden rounded-r-xl p-5 text-left text-foreground transition-colors hover:text-primary"
+      className="group relative flex h-80 shrink-0 snap-start cursor-pointer flex-col justify-between overflow-hidden rounded-r-xl p-5 text-left text-foreground transition-colors hover:text-primary"
       style={{
         flex: '0 0 calc((100% - 48px) / 5)',
         minWidth: 'min(100%, 200px)',
@@ -583,6 +656,21 @@ function TopicShelf({
   )
 }
 
+function DetailSection({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <section className="space-y-2 border-b pb-5 last:border-b-0 last:pb-0">
+      <h3 className="font-heading text-sm font-semibold">{title}</h3>
+      {children}
+    </section>
+  )
+}
+
 function HeroStat({
   icon: Icon,
   value,
@@ -607,8 +695,10 @@ function TextCard({
   starting,
   locked,
   canDelete,
+  isOwned,
   horizontal = true,
   onStart,
+  onViewDetail,
   onDelete,
 }: {
   text: TextItem
@@ -616,12 +706,31 @@ function TextCard({
   starting: boolean
   locked: boolean
   canDelete: boolean
+  isOwned: boolean
   horizontal?: boolean
   onStart: () => void
+  onViewDetail: () => void
   onDelete: () => void
 }) {
   const actionButtons = (
     <div className="flex shrink-0 gap-2">
+      <TooltipProvider delayDuration={500}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label={`Xem chi tiết ${text.title}`}
+              onClick={onViewDetail}
+            >
+              <Eye />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="border border-slate-300 bg-slate-100 text-slate-900 shadow-xl shadow-slate-900/15 [&>svg]:bg-slate-100! [&>svg]:fill-slate-100!">
+            Xem chi tiết
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <Button
         className={layout === 'cards' ? 'flex-1' : ''}
         onClick={onStart}
@@ -651,6 +760,11 @@ function TextCard({
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex items-center gap-2">
             <Badge variant="secondary" className="max-w-28 truncate">{text.genre}</Badge>
+            {isOwned && (
+              <Badge className="gap-1 border-transparent bg-linear-to-br from-sky-500 via-cyan-500 to-teal-500 text-white">
+                <UserRound className="size-3" /> Của bạn
+              </Badge>
+            )}
           </div>
           <h3 className="truncate font-heading text-sm font-semibold">{text.title}</h3>
           <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{text.content}</p>
@@ -664,11 +778,11 @@ function TextCard({
     <motion.div
       whileHover={{ y: -4 }}
       transition={{ duration: 0.2 }}
-      className={`group flex h-70 ${horizontal ? 'snap-start' : 'w-full'} flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 transition-shadow hover:ring-brand hover:shadow-lg`}
+      className={`group flex h-80 ${horizontal ? 'snap-start' : 'w-full'} flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 transition-shadow hover:ring-brand hover:shadow-lg`}
       style={horizontal ? { flex: '0 0 calc((100% - 48px) / 5)', minWidth: 'min(100%, 200px)' } : undefined}
     >
       {/* Dải màu theo thể loại */}
-      <div className="relative h-20 overflow-hidden bg-brand-gradient">
+      <div className="relative h-20 shrink-0 overflow-hidden bg-brand-gradient">
         <div className="bg-dot-grid absolute inset-0 text-white/15" />
         <span className="absolute right-3 bottom-2 text-4xl opacity-90 drop-shadow transition-transform duration-300 group-hover:scale-110">
           {GENRE_EMOJI[text.genre] ?? '📄'}
@@ -676,15 +790,48 @@ function TextCard({
         <Badge className="absolute top-3 left-3 bg-white/90 text-foreground backdrop-blur">
           {text.genre}
         </Badge>
+        {isOwned && (
+          <Badge className="absolute top-3 right-3 gap-1 border border-white/40 bg-linear-to-br from-sky-500 via-cyan-500 to-teal-500 text-white shadow-sm">
+            <UserRound className="size-3" /> Của bạn
+          </Badge>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col gap-2 p-4">
-        <h3 className="font-heading line-clamp-2 text-base font-semibold leading-snug">
-          {text.title}
-        </h3>
-        <p className="line-clamp-3 flex-1 text-sm text-muted-foreground">
-          {text.content}
-        </p>
+        <TooltipProvider delayDuration={500}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <h3
+              className="line-clamp-2 h-14 shrink-0 cursor-help overflow-hidden text-base font-semibold leading-6"
+              style={{ display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}
+            >
+              {text.title}
+            </h3>
+          </TooltipTrigger>
+          <TooltipContent
+            side="top"
+            className="block max-w-sm whitespace-normal wrap-break-word border border-slate-300 bg-slate-100 p-3 text-left text-sm leading-5 text-slate-900 shadow-xl shadow-slate-900/15 [&>svg]:bg-slate-100! [&>svg]:fill-slate-100!"
+          >
+            {text.title}
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <p
+              className="line-clamp-3 h-17 shrink-0 cursor-help overflow-hidden text-sm leading-5 text-muted-foreground"
+              style={{ display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3 }}
+            >
+              {text.content}
+            </p>
+          </TooltipTrigger>
+          <TooltipContent
+            side="top"
+            className="block max-h-60 max-w-md overflow-y-auto whitespace-normal wrap-break-word border border-slate-300 bg-slate-100 p-3 text-left text-sm leading-5 text-slate-900 shadow-xl shadow-slate-900/15 [&>svg]:bg-slate-100! [&>svg]:fill-slate-100!"
+          >
+            {text.content}
+          </TooltipContent>
+        </Tooltip>
+        </TooltipProvider>
         <div className="flex flex-wrap gap-1.5 pt-1">
           {(text.keywords?.length ?? 0) > 0 && (
             <Badge variant="outline" className="text-[11px]">

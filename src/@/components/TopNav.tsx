@@ -7,13 +7,13 @@ import type { UserRole } from '@/types'
 import { cn } from 'cn'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-    FilePlus2,
-    FlaskConical,
-    GraduationCap,
-    LayoutDashboard,
-    LogOut,
-    Menu,
-    X,
+  DoorOpen,
+  FilePlus2,
+  FlaskConical,
+  GraduationCap,
+  LayoutDashboard,
+  Menu,
+  X,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -117,10 +117,10 @@ export function TopNav({ variant }: { variant: 'student' | 'teacher' }) {
           </div>
           <div className="hidden text-left leading-tight sm:block">
             <div className="font-heading text-sm font-semibold">
-              ViSEF LitCritic
+              Multi LitCritic AI
             </div>
             <div className="text-[11px] text-muted-foreground">
-              {isStudent ? 'Không gian học sinh' : 'Không gian giáo viên'}
+              TƯ DUY PHẢN BIỆN & TIẾP NHẬN VĂN HỌC ĐA CHIỀU
             </div>
           </div>
         </button>
@@ -128,8 +128,10 @@ export function TopNav({ variant }: { variant: 'student' | 'teacher' }) {
         {/* Tabs — desktop */}
         <nav
           className={cn(
-            'hidden flex-1 items-center lg:flex',
-            isStudent ? 'justify-center gap-2' : 'justify-start gap-1 pl-4'
+            'hidden items-center lg:flex',
+            isStudent
+              ? 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 gap-2'
+              : 'flex-1 justify-start gap-1 pl-4'
           )}
         >
           {items.map((it) => {
@@ -197,7 +199,7 @@ export function TopNav({ variant }: { variant: 'student' | 'teacher' }) {
         <div className="flex-1 lg:hidden" />
 
         {/* Cụm người dùng — desktop */}
-        <div className="hidden shrink-0 items-center gap-2.5 lg:flex">
+        <div className={cn('hidden shrink-0 items-center gap-2.5 lg:flex', isStudent && 'ml-auto')}>
           {!isStudent && role && (
             <Badge className="bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
               {ROLE_LABEL[role]}
@@ -221,12 +223,15 @@ export function TopNav({ variant }: { variant: 'student' | 'teacher' }) {
             </AvatarFallback>
           </Avatar>
           <Button
-            variant="ghost"
-            size="icon-sm"
+            variant="outline"
+            size="sm"
             onClick={logout}
-            aria-label="Đăng xuất"
+            aria-label="Logout"
+            title="Logout"
+            className="gap-1.5 rounded-full border-rose-200 bg-rose-50/70 px-3 text-rose-700 shadow-sm hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/60"
           >
-            <LogOut className="size-4" />
+            Đăng xuất
+            <DoorOpen className="size-4" />
           </Button>
         </div>
 
@@ -296,7 +301,7 @@ export function TopNav({ variant }: { variant: 'student' | 'teacher' }) {
                   </div>
                 </div>
                 <Button variant="ghost" size="icon-sm" onClick={logout}>
-                  <LogOut className="size-4" />
+                  <DoorOpen className="size-4" />
                 </Button>
               </div>
             </div>
